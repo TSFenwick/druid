@@ -64,7 +64,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class DruidMeta extends MetaImpl {
+public class DruidMeta extends MetaImpl
+{
     private <T extends Throwable> T logFailure(T error, String message, Object... format) {
         LOG.error(message, format);
         return sanitizeExceptions(error);
