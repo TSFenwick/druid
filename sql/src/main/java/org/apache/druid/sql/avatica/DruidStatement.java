@@ -91,12 +91,13 @@ public class DruidStatement implements Closeable
   private AuthenticationResult authenticationResult;
 
   public DruidStatement(
-          final String connectionId,
-          final int statementId,
-          final Map<String, Object> queryContext,
-          final SqlLifecycle sqlLifecycle,
-          final Runnable onClose,
-          final ServerConfig serverConfig)
+      final String connectionId,
+      final int statementId,
+      final Map<String, Object> queryContext,
+      final SqlLifecycle sqlLifecycle,
+      final Runnable onClose,
+      final ServerConfig serverConfig
+  )
   {
     this.connectionId = Preconditions.checkNotNull(connectionId, "connectionId");
     this.statementId = statementId;
@@ -114,12 +115,14 @@ public class DruidStatement implements Closeable
   }
 
 
-  private <T extends Throwable> T logFailure(T error) {
+  private <T extends Throwable> T logFailure(T error)
+  {
     DruidMeta.logError(error);
     return sanitizeExceptions(error);
   }
 
-  private <T extends Throwable> T sanitizeExceptions(T error) {
+  private <T extends Throwable> T sanitizeExceptions(T error)
+  {
     if (error instanceof ForbiddenException) {
       return (T) serverConfig.getErrorResponseTransformStrategy().transformIfNeeded((ForbiddenException) error);
     }
