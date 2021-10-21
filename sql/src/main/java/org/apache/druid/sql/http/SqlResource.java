@@ -192,6 +192,7 @@ public class SqlResource
     }
     catch (ForbiddenException e) {
       endLifecycleWithoutEmittingMetrics(sqlQueryId, lifecycle);
+      // can throw because jersey will map this to the correct error code
       throw (ForbiddenException) serverConfig.getErrorResponseTransformStrategy().transformIfNeeded(e); // let ForbiddenExceptionMapper handle this
     }
     catch (Exception e) {

@@ -35,6 +35,8 @@ import org.apache.druid.java.util.common.concurrent.Execs;
 import org.apache.druid.java.util.common.guava.Sequence;
 import org.apache.druid.java.util.common.guava.Yielder;
 import org.apache.druid.java.util.common.guava.Yielders;
+import org.apache.druid.query.QueryException;
+import org.apache.druid.server.initialization.ServerConfig;
 import org.apache.druid.server.security.AuthenticationResult;
 import org.apache.druid.server.security.ForbiddenException;
 import org.apache.druid.sql.SqlLifecycle;
@@ -78,6 +80,7 @@ public class DruidStatement implements Closeable
    * https://github.com/apache/druid/pull/4415
    */
   private final ExecutorService yielderOpenCloseExecutor;
+  private final ServerConfig serverConfig;
   private State state = State.NEW;
   private String query;
   private long maxRowCount;
@@ -88,18 +91,19 @@ public class DruidStatement implements Closeable
   private AuthenticationResult authenticationResult;
 
   public DruidStatement(
-      final String connectionId,
-      final int statementId,
-      final Map<String, Object> queryContext,
-      final SqlLifecycle sqlLifecycle,
-      final Runnable onClose
-  )
+          final String connectionId,
+          final int statementId,
+          final Map<String, Object> queryContext,
+          final SqlLifecycle sqlLifecycle,
+          final Runnable onClose,
+          final ServerConfig serverConfig)
   {
     this.connectionId = Preconditions.checkNotNull(connectionId, "connectionId");
     this.statementId = statementId;
     this.queryContext = queryContext == null ? ImmutableMap.of() : queryContext;
     this.sqlLifecycle = Preconditions.checkNotNull(sqlLifecycle, "sqlLifecycle");
     this.onClose = Preconditions.checkNotNull(onClose, "onClose");
+    this.serverConfig = serverConfig;
     this.yielderOpenCloseExecutor = Execs.singleThreaded(
         StringUtils.format(
             "JDBCYielderOpenCloseExecutor-connection-%s-statement-%d",
@@ -107,6 +111,22 @@ public class DruidStatement implements Closeable
             statementId
         )
     );
+  }
+
+
+  private <T extends Throwable> T logFailure(T error) {
+    DruidMeta.logError(error);
+    return sanitizeExceptions(error);
+  }
+
+  private <T extends Throwable> T sanitizeExceptions(T error) {
+    if (error instanceof ForbiddenException) {
+      return (T) serverConfig.getErrorResponseTransformStrategy().transformIfNeeded((ForbiddenException) error);
+    }
+    if (error instanceof QueryException) {
+      return (T) serverConfig.getErrorResponseTransformStrategy().transformIfNeeded((QueryException) error);
+    }
+    return error;
   }
 
   public static List<ColumnMetaData> createColumnMetaData(final RelDataType rowType)
@@ -361,7 +381,7 @@ public class DruidStatement implements Closeable
             sqlLifecycle.finalizeStateAndEmitLogsAndMetrics(this.throwable, null, -1);
           }
         } else {
-          DruidMeta.logFailure(this.throwable);
+          logFailure(this.throwable);
         }
         onClose.run();
       }
@@ -390,7 +410,7 @@ public class DruidStatement implements Closeable
   private DruidStatement closeAndPropagateThrowable(Throwable t)
   {
     this.throwable = t;
-    DruidMeta.logFailure(t);
+    t = logFailure(t);
     try {
       close();
     }

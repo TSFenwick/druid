@@ -53,6 +53,7 @@ import org.apache.druid.server.QueryScheduler;
 import org.apache.druid.server.QuerySchedulerProvider;
 import org.apache.druid.server.QueryStackTests;
 import org.apache.druid.server.RequestLogLine;
+import org.apache.druid.server.initialization.ServerConfig;
 import org.apache.druid.server.log.RequestLogger;
 import org.apache.druid.server.log.TestRequestLogger;
 import org.apache.druid.server.metrics.NoopServiceEmitter;
@@ -879,6 +880,7 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
       }
     };
 
+    final ServerConfig serverConfig = new ServerConfig();
     final PlannerConfig plannerConfig = new PlannerConfig();
     final DruidOperatorTable operatorTable = CalciteTests.createOperatorTable();
     final ExprMacroTable macroTable = CalciteTests.createExprMacroTable();
@@ -899,6 +901,7 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
           )
         ),
         smallFrameConfig,
+        serverConfig,
         injector
     )
     {
@@ -968,6 +971,7 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
       }
     };
 
+    final ServerConfig serverConfig = new ServerConfig();
     final PlannerConfig plannerConfig = new PlannerConfig();
     final DruidOperatorTable operatorTable = CalciteTests.createOperatorTable();
     final ExprMacroTable macroTable = CalciteTests.createExprMacroTable();
@@ -988,6 +992,7 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
             )
         ),
         smallFrameConfig,
+        serverConfig,
         injector
     )
     {
