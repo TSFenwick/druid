@@ -53,6 +53,7 @@ import org.apache.druid.server.QueryScheduler;
 import org.apache.druid.server.QuerySchedulerProvider;
 import org.apache.druid.server.QueryStackTests;
 import org.apache.druid.server.RequestLogLine;
+import org.apache.druid.server.initialization.ServerConfig;
 import org.apache.druid.server.log.RequestLogger;
 import org.apache.druid.server.log.TestRequestLogger;
 import org.apache.druid.server.metrics.NoopServiceEmitter;
@@ -222,7 +223,11 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
     url = this.getJdbcConnectionString(port);
     client = DriverManager.getConnection(url, "regularUser", "druid");
     superuserClient = DriverManager.getConnection(url, CalciteTests.TEST_SUPERUSER_NAME, "druid");
-    clientNoTrailingSlash = DriverManager.getConnection(StringUtils.maybeRemoveTrailingSlash(url), CalciteTests.TEST_SUPERUSER_NAME, "druid");
+    clientNoTrailingSlash = DriverManager.getConnection(
+        StringUtils.maybeRemoveTrailingSlash(url),
+        CalciteTests.TEST_SUPERUSER_NAME,
+        "druid"
+    );
 
     final Properties propertiesLosAngeles = new Properties();
     propertiesLosAngeles.setProperty("sqlTimeZone", "America/Los_Angeles");
@@ -262,7 +267,8 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
   @Test
   public void testSelectCountNoTrailingSlash() throws Exception
   {
-    final ResultSet resultSet = clientNoTrailingSlash.createStatement().executeQuery("SELECT COUNT(*) AS cnt FROM druid.foo");
+    final ResultSet resultSet = clientNoTrailingSlash.createStatement()
+                                                     .executeQuery("SELECT COUNT(*) AS cnt FROM druid.foo");
     final List<Map<String, Object>> rows = getRows(resultSet);
     Assert.assertEquals(
         ImmutableList.of(
@@ -367,8 +373,9 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
         ImmutableList.of(
             ImmutableMap.of(
                 "PLAN",
-                StringUtils.format("DruidQueryRel(query=[{\"queryType\":\"timeseries\",\"dataSource\":{\"type\":\"table\",\"name\":\"foo\"},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"descending\":false,\"virtualColumns\":[],\"filter\":null,\"granularity\":{\"type\":\"all\"},\"aggregations\":[{\"type\":\"count\",\"name\":\"a0\"}],\"postAggregations\":[],\"limit\":2147483647,\"context\":{\"sqlQueryId\":\"%s\",\"sqlStringifyArrays\":false,\"sqlTimeZone\":\"America/Los_Angeles\"}}], signature=[{a0:LONG}])\n",
-                                   DUMMY_SQL_QUERY_ID
+                StringUtils.format(
+                    "DruidQueryRel(query=[{\"queryType\":\"timeseries\",\"dataSource\":{\"type\":\"table\",\"name\":\"foo\"},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"descending\":false,\"virtualColumns\":[],\"filter\":null,\"granularity\":{\"type\":\"all\"},\"aggregations\":[{\"type\":\"count\",\"name\":\"a0\"}],\"postAggregations\":[],\"limit\":2147483647,\"context\":{\"sqlQueryId\":\"%s\",\"sqlStringifyArrays\":false,\"sqlTimeZone\":\"America/Los_Angeles\"}}], signature=[{a0:LONG}])\n",
+                    DUMMY_SQL_QUERY_ID
                 ),
                 "RESOURCES",
                 "[{\"name\":\"foo\",\"type\":\"DATASOURCE\"}]"
@@ -887,18 +894,19 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
         CalciteTests.createMockRootSchema(conglomerate, walker, plannerConfig, AuthTestUtils.TEST_AUTHORIZER_MAPPER);
     DruidMeta smallFrameDruidMeta = new DruidMeta(
         CalciteTests.createSqlLifecycleFactory(
-          new PlannerFactory(
-              rootSchema,
-              CalciteTests.createMockQueryLifecycleFactory(walker, conglomerate),
-              operatorTable,
-              macroTable,
-              plannerConfig,
-              AuthTestUtils.TEST_AUTHORIZER_MAPPER,
-              CalciteTests.getJsonMapper(),
-              CalciteTests.DRUID_SCHEMA_NAME
-          )
+            new PlannerFactory(
+                rootSchema,
+                CalciteTests.createMockQueryLifecycleFactory(walker, conglomerate),
+                operatorTable,
+                macroTable,
+                plannerConfig,
+                AuthTestUtils.TEST_AUTHORIZER_MAPPER,
+                CalciteTests.getJsonMapper(),
+                CalciteTests.DRUID_SCHEMA_NAME
+            )
         ),
         smallFrameConfig,
+        new ServerConfig(),
         injector
     )
     {
@@ -988,6 +996,7 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
             )
         ),
         smallFrameConfig,
+        new ServerConfig(),
         injector
     )
     {
@@ -1080,7 +1089,8 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
   @Test
   public void testParameterBinding() throws Exception
   {
-    PreparedStatement statement = client.prepareStatement("SELECT COUNT(*) AS cnt FROM druid.foo WHERE dim1 = ? OR dim1 = ?");
+    PreparedStatement statement = client.prepareStatement(
+        "SELECT COUNT(*) AS cnt FROM druid.foo WHERE dim1 = ? OR dim1 = ?");
     statement.setString(1, "abc");
     statement.setString(2, "def");
     final ResultSet resultSet = statement.executeQuery();
@@ -1096,7 +1106,8 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
   @Test
   public void testSysTableParameterBinding() throws Exception
   {
-    PreparedStatement statement = client.prepareStatement("SELECT COUNT(*) AS cnt FROM sys.servers WHERE servers.host = ?");
+    PreparedStatement statement = client.prepareStatement(
+        "SELECT COUNT(*) AS cnt FROM sys.servers WHERE servers.host = ?");
     statement.setString(1, "dummy");
     final ResultSet resultSet = statement.executeQuery();
     final List<Map<String, Object>> rows = getRows(resultSet);
