@@ -39,7 +39,9 @@ import org.apache.druid.common.exception.SanitizableException;
 import org.apache.druid.java.util.common.DateTimes;
 import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.common.StringUtils;
+import org.apache.druid.java.util.common.UOE;
 import org.apache.druid.java.util.common.logger.Logger;
+import org.apache.druid.query.QueryInterruptedException;
 import org.apache.druid.server.initialization.ServerConfig;
 import org.apache.druid.server.security.AuthenticationResult;
 import org.apache.druid.server.security.Authenticator;
@@ -68,7 +70,7 @@ public class DruidMeta extends MetaImpl
 {
   public static <T extends Throwable> T logFailure(T error, String message, Object... format)
   {
-    LOG.error(message, format);
+    LOG.error(error, message, format);
     return error;
   }
 
@@ -136,7 +138,7 @@ public class DruidMeta extends MetaImpl
       openDruidConnection(ch.id, context.build());
     }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -151,7 +153,7 @@ public class DruidMeta extends MetaImpl
       }
     }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -164,7 +166,7 @@ public class DruidMeta extends MetaImpl
       return connProps;
     }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -176,7 +178,7 @@ public class DruidMeta extends MetaImpl
       return new StatementHandle(ch.id, druidStatement.getStatementId(), null);
     }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -194,7 +196,7 @@ public class DruidMeta extends MetaImpl
         druidStatement = getDruidStatement(statement);
       }
       catch (NoSuchStatementException e) {
-        throw logFailure(new IllegalStateException(e));
+        throw logFailure(new ISE(e, e.getMessage()));
       }
       final DruidConnection druidConnection = getDruidConnection(statement.connectionId);
       AuthenticationResult authenticationResult = authenticateConnection(druidConnection);
@@ -210,7 +212,7 @@ public class DruidMeta extends MetaImpl
       return statement;
     }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -224,7 +226,7 @@ public class DruidMeta extends MetaImpl
   )
   {
     // Avatica doesn't call this.
-    throw new UnsupportedOperationException("Deprecated");
+    throw (UOE) serverConfig.getErrorResponseTransformStrategy().transformIfNeeded(new UOE("Deprecated"));
   }
 
   @Override
@@ -268,8 +270,11 @@ public class DruidMeta extends MetaImpl
           )
       );
     }
+    catch (NoSuchStatementException e) {
+      throw SanitizeException(e);
+    }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -280,7 +285,7 @@ public class DruidMeta extends MetaImpl
   )
   {
     // Batch statements are used for bulk updates, but we don't support updates.
-    throw new UnsupportedOperationException("Batch statements not supported");
+    throw (UOE) serverConfig.getErrorResponseTransformStrategy().transformIfNeeded(new UOE("Batch statements not supported"));
   }
 
   @Override
@@ -290,7 +295,7 @@ public class DruidMeta extends MetaImpl
   )
   {
     // Batch statements are used for bulk updates, but we don't support updates.
-    throw new UnsupportedOperationException("Batch statements not supported");
+    throw (UOE) serverConfig.getErrorResponseTransformStrategy().transformIfNeeded(new UOE("Batch statements not supported"));
   }
 
   @Override
@@ -305,8 +310,12 @@ public class DruidMeta extends MetaImpl
       LOG.debug("Fetching next frame from offset[%s] with [%s] rows for statement[%s]", offset, maxRows, statement.id);
       return getDruidStatement(statement).nextFrame(offset, maxRows);
     }
+    catch (NoSuchStatementException e) {
+      throw SanitizeException(e);
+    }
+    //MissingResultsException is never thrown
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -319,7 +328,7 @@ public class DruidMeta extends MetaImpl
   )
   {
     // Avatica doesn't call this.
-    throw new UnsupportedOperationException("Deprecated");
+    throw (UOE) serverConfig.getErrorResponseTransformStrategy().transformIfNeeded(new UOE("Batch statements not supported"));
   }
 
   @Override
@@ -351,8 +360,11 @@ public class DruidMeta extends MetaImpl
           )
       );
     }
+    catch (NoSuchStatementException e) {
+      throw SanitizeException(e);
+    }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -383,7 +395,7 @@ public class DruidMeta extends MetaImpl
       }
     }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -403,22 +415,24 @@ public class DruidMeta extends MetaImpl
       }
       return !isDone;
     }
-    catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+    catch (Throwable e) {
+      throw SanitizeException(e);
     }
   }
 
-  private <T extends RuntimeException> T SanitizeRunTimeExceptions(RuntimeException e)
+  private <T extends Throwable> RuntimeException SanitizeException(T throwable)
   {
-    if (e.getCause() instanceof SanitizableException) {
+    if (throwable instanceof SanitizableException) {
       throw new RuntimeException(serverConfig.getErrorResponseTransformStrategy()
-                                             .transformIfNeeded((SanitizableException) e.getCause()));
+                                             .transformIfNeeded((SanitizableException) throwable));
     }
-    if (e instanceof SanitizableException) {
+    // unwrap a runtime exception and check cause to see if it is sanitizable
+    if (throwable instanceof RuntimeException && throwable.getCause() instanceof SanitizableException) {
       throw new RuntimeException(serverConfig.getErrorResponseTransformStrategy()
-                                             .transformIfNeeded((SanitizableException) e));
+                                             .transformIfNeeded((SanitizableException) throwable.getCause()));
     }
-    throw e;
+    throw new RuntimeException(serverConfig.getErrorResponseTransformStrategy().
+                                           transformIfNeeded(QueryInterruptedException.wrapIfNeeded(throwable)));
   }
 
   @Override
@@ -453,7 +467,7 @@ public class DruidMeta extends MetaImpl
       return sqlResultSet(ch, sql);
     }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -487,7 +501,7 @@ public class DruidMeta extends MetaImpl
       return sqlResultSet(ch, sql);
     }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -543,7 +557,7 @@ public class DruidMeta extends MetaImpl
       return sqlResultSet(ch, sql);
     }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -610,7 +624,7 @@ public class DruidMeta extends MetaImpl
       return sqlResultSet(ch, sql);
     }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -628,7 +642,7 @@ public class DruidMeta extends MetaImpl
       return sqlResultSet(ch, sql);
     }
     catch (RuntimeException e) {
-      throw SanitizeRunTimeExceptions(e);
+      throw SanitizeException(e);
     }
   }
 
@@ -680,7 +694,7 @@ public class DruidMeta extends MetaImpl
       if (connectionCount.get() > config.getMaxConnections()) {
         // We aren't going to make a connection after all.
         connectionCount.decrementAndGet();
-        throw logFailure(new ISE("Too many connections, limit is[%,d]", config.getMaxConnections()));
+        throw logFailure(new ISE("Too many connections, limit is[%,d] per broker", config.getMaxConnections()));
       }
     }
 
