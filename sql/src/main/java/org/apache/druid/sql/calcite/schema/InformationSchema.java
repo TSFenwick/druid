@@ -19,6 +19,8 @@
 
 package org.apache.druid.sql.calcite.schema;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
@@ -45,6 +47,7 @@ import org.apache.calcite.schema.TableMacro;
 import org.apache.calcite.schema.impl.AbstractSchema;
 import org.apache.calcite.schema.impl.AbstractTable;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.druid.java.util.common.granularity.Granularity;
 import org.apache.druid.java.util.emitter.EmittingLogger;
 import org.apache.druid.segment.column.ColumnType;
 import org.apache.druid.segment.column.RowSignature;
@@ -90,6 +93,8 @@ public class InformationSchema extends AbstractSchema
       .add("TABLE_TYPE", ColumnType.STRING)
       .add("IS_JOINABLE", ColumnType.STRING)
       .add("IS_BROADCAST", ColumnType.STRING)
+      .add("IS_ROLLUP", ColumnType.STRING)
+      .add("QUERY_GRANULARITY", ColumnType.STRING)
       .build();
   private static final RowSignature COLUMNS_SIGNATURE = RowSignature
       .builder()
@@ -225,22 +230,46 @@ public class InformationSchema extends AbstractSchema
                                 final Table table = subSchema.getTable(tableName);
                                 final boolean isJoinable;
                                 final boolean isBroadcast;
+                                final boolean isRollup;
+                                final Granularity queryGranularity;
+                                String granularityType = "";
+
                                 if (table instanceof DruidTable) {
                                   DruidTable druidTable = (DruidTable) table;
                                   isJoinable = druidTable.isJoinable();
                                   isBroadcast = druidTable.isBroadcast();
+                                  isRollup = druidTable.isRollup();
+                                  queryGranularity = druidTable.getQueryGranularity();
+                                  ObjectMapper objectMapper = new ObjectMapper();
+                                  try {
+                                    granularityType = objectMapper.writeValueAsString(queryGranularity);
+//                                    char firstChar = granularityType.charAt(0);
+//                                    char lastChar = granularityType.charAt(granularityType.length());
+//                                    if (firstChar == '"' && lastChar == '"' && granularityType.length() > 0) {
+//                                      granularityType = granularityType.substring(1, granularityType.length()-1);
+//                                    }
+                                  }
+                                  catch (JsonProcessingException e) {
+                                    log.error(e, "Couldn't turn granularity %s into a json object", queryGranularity);
+                                    granularityType = null;
+                                  }
                                 } else {
                                   isJoinable = false;
                                   isBroadcast = false;
+                                  isRollup = false;
+                                  granularityType = null;
                                 }
 
+
                                 return new Object[]{
-                                    CATALOG_NAME, // TABLE_CATALOG
-                                    schemaName, // TABLE_SCHEMA
-                                    tableName, // TABLE_NAME
-                                    table.getJdbcTableType().toString(), // TABLE_TYPE
-                                    isJoinable ? INFO_TRUE : INFO_FALSE, // IS_JOINABLE
-                                    isBroadcast ? INFO_TRUE : INFO_FALSE // IS_BROADCAST
+                                    CATALOG_NAME,// TABLE_CATALOG
+                                    schemaName,// TABLE_SCHEMA
+                                    tableName,// TABLE_NAME
+                                    table.getJdbcTableType().toString(),// TABLE_TYPE
+                                    isJoinable ? INFO_TRUE : INFO_FALSE,// IS_JOINABLE
+                                    isBroadcast ? INFO_TRUE : INFO_FALSE,// IS_BROADCAST
+                                    isRollup ? INFO_TRUE : INFO_FALSE,// IS_ROLLUP
+                                    (granularityType == null) ? "NULL" : granularityType
                                 };
                               }
                           ),
@@ -421,7 +450,9 @@ public class InformationSchema extends AbstractSchema
                   boolean isCharacter = SqlTypeName.CHAR_TYPES.contains(type.getSqlTypeName());
                   boolean isDateTime = SqlTypeName.DATETIME_TYPES.contains(type.getSqlTypeName());
 
-                  final String typeName = type instanceof RowSignatures.ComplexSqlType ? ((RowSignatures.ComplexSqlType) type).asTypeString() : type.getSqlTypeName().toString();
+                  final String typeName = type instanceof RowSignatures.ComplexSqlType
+                                          ? ((RowSignatures.ComplexSqlType) type).asTypeString()
+                                          : type.getSqlTypeName().toString();
                   return new Object[]{
                       CATALOG_NAME, // TABLE_CATALOG
                       schemaName, // TABLE_SCHEMA
@@ -452,7 +483,6 @@ public class InformationSchema extends AbstractSchema
    *
    * @param schemaPlus   schema
    * @param functionName function name
-   *
    * @return view, or null
    */
   @Nullable

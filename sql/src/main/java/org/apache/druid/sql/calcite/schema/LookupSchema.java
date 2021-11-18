@@ -23,6 +23,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.impl.AbstractSchema;
+import org.apache.druid.java.util.common.granularity.Granularities;
 import org.apache.druid.query.LookupDataSource;
 import org.apache.druid.query.lookup.LookupExtractorFactoryContainerProvider;
 import org.apache.druid.segment.column.ColumnType;
@@ -59,7 +60,10 @@ public class LookupSchema extends AbstractSchema
     for (final String lookupName : lookupProvider.getAllLookupNames()) {
       // all lookups should be also joinable through lookup joinable factory, and lookups are effectively broadcast
       // (if we ignore lookup tiers...)
-      tableMapBuilder.put(lookupName, new DruidTable(new LookupDataSource(lookupName), ROW_SIGNATURE, true, true));
+      tableMapBuilder.put(lookupName, new DruidTable(new LookupDataSource(lookupName), ROW_SIGNATURE, true, true,
+                                                     false,
+                                                     null
+      ));
     }
 
     return tableMapBuilder.build();

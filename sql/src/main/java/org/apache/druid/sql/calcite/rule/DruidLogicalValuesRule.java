@@ -80,7 +80,9 @@ public class DruidLogicalValuesRule extends RelOptRule
         InlineDataSource.fromIterable(objectTuples, rowSignature),
         rowSignature,
         true,
-        false
+        false,
+        false,
+        null // using null here since Granularities.None is actually millisecond
     );
     call.transformTo(
         DruidQueryRel.fullScan(values, druidTable, queryMaker)

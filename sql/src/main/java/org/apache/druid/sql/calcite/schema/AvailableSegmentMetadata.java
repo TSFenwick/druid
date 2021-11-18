@@ -19,6 +19,7 @@
 
 package org.apache.druid.sql.calcite.schema;
 
+import org.apache.druid.java.util.common.granularity.Granularity;
 import org.apache.druid.segment.column.RowSignature;
 import org.apache.druid.server.coordination.DruidServerMetadata;
 import org.apache.druid.timeline.DataSegment;
@@ -37,10 +38,12 @@ public class AvailableSegmentMetadata
       long isRealtime,
       Set<DruidServerMetadata> segmentServers,
       RowSignature rowSignature,
-      long numRows
+      long numRows,
+      boolean isRollup,
+      Granularity granularity
   )
   {
-    return new Builder(segment, isRealtime, segmentServers, rowSignature, numRows);
+    return new Builder(segment, isRealtime, segmentServers, rowSignature, numRows, isRollup, granularity);
   }
 
   public static Builder from(AvailableSegmentMetadata h)
@@ -50,7 +53,9 @@ public class AvailableSegmentMetadata
         h.isRealtime(),
         h.getReplicas(),
         h.getRowSignature(),
-        h.getNumRows()
+        h.getNumRows(),
+        h.isRollup(),
+        h.getGranularity()
     );
   }
 
@@ -63,6 +68,8 @@ public class AvailableSegmentMetadata
   private final long numRows;
   @Nullable
   private final RowSignature rowSignature;
+  private final boolean isRollup;
+  private final Granularity granularity;
 
   private AvailableSegmentMetadata(Builder builder)
   {
@@ -71,6 +78,8 @@ public class AvailableSegmentMetadata
     this.segmentServers = builder.segmentServers;
     this.numRows = builder.numRows;
     this.segment = builder.segment;
+    this.granularity = builder.granularity;
+    this.isRollup = builder.isRollup;
   }
 
   public long isRealtime()
@@ -104,6 +113,16 @@ public class AvailableSegmentMetadata
     return rowSignature;
   }
 
+  public boolean isRollup()
+  {
+    return isRollup;
+  }
+
+  public Granularity getGranularity()
+  {
+    return granularity;
+  }
+
   public static class Builder
   {
     private final DataSegment segment;
@@ -113,13 +132,17 @@ public class AvailableSegmentMetadata
     @Nullable
     private RowSignature rowSignature;
     private long numRows;
+    private boolean isRollup;
+    private Granularity granularity;
 
     private Builder(
         DataSegment segment,
         long isRealtime,
         Set<DruidServerMetadata> servers,
         @Nullable RowSignature rowSignature,
-        long numRows
+        long numRows,
+        boolean isRollup,
+        Granularity granularity
     )
     {
       this.segment = segment;
@@ -127,6 +150,8 @@ public class AvailableSegmentMetadata
       this.segmentServers = servers;
       this.rowSignature = rowSignature;
       this.numRows = numRows;
+      this.isRollup = isRollup;
+      this.granularity = granularity;
     }
 
     public Builder withRowSignature(RowSignature rowSignature)
@@ -150,6 +175,18 @@ public class AvailableSegmentMetadata
     public Builder withRealtime(long isRealtime)
     {
       this.isRealtime = isRealtime;
+      return this;
+    }
+
+    public Builder withRollup(boolean isRollup)
+    {
+      this.isRollup = isRollup;
+      return this;
+    }
+
+    public Builder withGranularity(Granularity granularity)
+    {
+      this.granularity = granularity;
       return this;
     }
 

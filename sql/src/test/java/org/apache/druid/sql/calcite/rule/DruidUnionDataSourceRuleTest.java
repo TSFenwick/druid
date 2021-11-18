@@ -22,6 +22,7 @@ package org.apache.druid.sql.calcite.rule;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.util.mapping.Mappings;
+import org.apache.druid.java.util.common.granularity.Granularities;
 import org.apache.druid.query.TableDataSource;
 import org.apache.druid.segment.column.ColumnType;
 import org.apache.druid.segment.column.RowSignature;
@@ -51,7 +52,8 @@ public class DruidUnionDataSourceRuleTest
                   .add("col2", ColumnType.LONG)
                   .build(),
       false,
-      false
+      false,
+      false, Granularities.DAY
   );
 
   @Test

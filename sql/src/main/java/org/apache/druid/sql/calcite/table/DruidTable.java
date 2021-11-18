@@ -32,10 +32,12 @@ import org.apache.calcite.schema.Statistics;
 import org.apache.calcite.schema.TranslatableTable;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlNode;
+import org.apache.druid.java.util.common.granularity.Granularity;
 import org.apache.druid.query.DataSource;
 import org.apache.druid.segment.column.RowSignature;
 
 import java.util.Objects;
+
 
 public class DruidTable implements TranslatableTable
 {
@@ -43,18 +45,24 @@ public class DruidTable implements TranslatableTable
   private final RowSignature rowSignature;
   private final boolean joinable;
   private final boolean broadcast;
+  private final boolean rollup;
+  private final Granularity queryGranularity;
 
   public DruidTable(
       final DataSource dataSource,
       final RowSignature rowSignature,
       final boolean isJoinable,
-      final boolean isBroadcast
+      final boolean isBroadcast,
+      boolean rollup,
+      Granularity queryGranularity
   )
   {
     this.dataSource = Preconditions.checkNotNull(dataSource, "dataSource");
     this.rowSignature = Preconditions.checkNotNull(rowSignature, "rowSignature");
     this.joinable = isJoinable;
     this.broadcast = isBroadcast;
+    this.rollup = rollup;
+    this.queryGranularity = queryGranularity;
   }
 
   public DataSource getDataSource()
@@ -99,6 +107,16 @@ public class DruidTable implements TranslatableTable
   public boolean isRolledUp(final String column)
   {
     return false;
+  }
+
+  public boolean isRollup()
+  {
+    return rollup;
+  }
+
+  public Granularity getQueryGranularity()
+  {
+    return queryGranularity;
   }
 
   @Override
