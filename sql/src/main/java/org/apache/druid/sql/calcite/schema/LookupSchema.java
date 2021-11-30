@@ -23,7 +23,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.impl.AbstractSchema;
-import org.apache.druid.java.util.common.granularity.Granularities;
 import org.apache.druid.query.LookupDataSource;
 import org.apache.druid.query.lookup.LookupExtractorFactoryContainerProvider;
 import org.apache.druid.segment.column.ColumnType;

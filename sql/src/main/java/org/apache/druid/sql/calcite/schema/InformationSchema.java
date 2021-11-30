@@ -243,11 +243,11 @@ public class InformationSchema extends AbstractSchema
                                   ObjectMapper objectMapper = new ObjectMapper();
                                   try {
                                     granularityType = objectMapper.writeValueAsString(queryGranularity);
-//                                    char firstChar = granularityType.charAt(0);
-//                                    char lastChar = granularityType.charAt(granularityType.length());
-//                                    if (firstChar == '"' && lastChar == '"' && granularityType.length() > 0) {
-//                                      granularityType = granularityType.substring(1, granularityType.length()-1);
-//                                    }
+                                    // char firstChar = granularityType.charAt(0);
+                                    // char lastChar = granularityType.charAt(granularityType.length());
+                                    // if (firstChar == '"' && lastChar == '"' && granularityType.length() > 0) {
+                                    //  granularityType = granularityType.substring(1, granularityType.length()-1);
+                                    // }
                                   }
                                   catch (JsonProcessingException e) {
                                     log.error(e, "Couldn't turn granularity %s into a json object", queryGranularity);
@@ -262,14 +262,14 @@ public class InformationSchema extends AbstractSchema
 
 
                                 return new Object[]{
-                                    CATALOG_NAME,// TABLE_CATALOG
-                                    schemaName,// TABLE_SCHEMA
-                                    tableName,// TABLE_NAME
-                                    table.getJdbcTableType().toString(),// TABLE_TYPE
-                                    isJoinable ? INFO_TRUE : INFO_FALSE,// IS_JOINABLE
-                                    isBroadcast ? INFO_TRUE : INFO_FALSE,// IS_BROADCAST
-                                    isRollup ? INFO_TRUE : INFO_FALSE,// IS_ROLLUP
-                                    (granularityType == null) ? "NULL" : granularityType
+                                    CATALOG_NAME, // TABLE_CATALOG
+                                    schemaName, // TABLE_SCHEMA
+                                    tableName, // TABLE_NAME
+                                    table.getJdbcTableType().toString(), // TABLE_TYPE
+                                    isJoinable ? INFO_TRUE : INFO_FALSE, // IS_JOINABLE
+                                    isBroadcast ? INFO_TRUE : INFO_FALSE, // IS_BROADCAST
+                                    isRollup ? INFO_TRUE : INFO_FALSE, // IS_ROLLUP
+                                    (granularityType == null) ? "NULL" : granularityType // GRANULARITY_TYPE
                                 };
                               }
                           ),
