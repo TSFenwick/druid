@@ -52,7 +52,6 @@ import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.druid.java.util.common.granularity.Granularities;
 import org.apache.druid.java.util.common.granularity.Granularity;
 import org.apache.druid.java.util.common.granularity.GranularityType;
-import org.apache.druid.java.util.common.granularity.PeriodGranularity;
 import org.apache.druid.java.util.emitter.EmittingLogger;
 import org.apache.druid.segment.column.ColumnType;
 import org.apache.druid.segment.column.RowSignature;
