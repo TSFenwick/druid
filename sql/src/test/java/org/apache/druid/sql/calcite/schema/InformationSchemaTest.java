@@ -24,6 +24,7 @@ import org.apache.druid.java.util.common.granularity.DurationGranularity;
 import org.apache.druid.java.util.common.granularity.Granularities;
 import org.apache.druid.java.util.common.granularity.NoneGranularity;
 import org.apache.druid.java.util.common.granularity.PeriodGranularity;
+import org.apache.druid.segment.TestHelper;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
 import org.joda.time.Period;
@@ -38,74 +39,82 @@ public class InformationSchemaTest
   @Before
   public void setUp()
   {
-    informationSchema = new InformationSchema(new DruidSchemaCatalog(null, null), null);
+    informationSchema = new InformationSchema(new DruidSchemaCatalog(null, null), null, TestHelper.makeJsonMapper());
   }
 
   @Test
   public void testPeriodGranularity()
   {
-
     String output = informationSchema.getReadableGranularity(new PeriodGranularity(
         Period.hours(6),
         DateTime.parse("2021-11-30T16:35:11.793-08:00"),
         DateTimeZone.UTC
     ));
-    Assert.assertEquals("{\"type\":\"period\",\"period\":{\"days\":0,\"fieldTypes\":[{\"name\":\"years\"},{\"name\":\"months\"},{\"name\":\"weeks\"},{\"name\":\"days\"},{\"name\":\"hours\"},{\"name\":\"minutes\"},{\"name\":\"seconds\"},{\"name\":\"millis\"}],\"hours\":6,\"millis\":0,\"minutes\":0,\"months\":0,\"periodType\":{\"name\":\"Standard\"},\"seconds\":0,\"values\":[0,0,0,0,6,0,0,0],\"weeks\":0,\"years\":0},\"timeZone\":{\"fixed\":true,\"id\":\"UTC\"},\"origin\":{\"afterNow\":false,\"beforeNow\":true,\"centuryOfEra\":20,\"chronology\":{\"zone\":{\"fixed\":true,\"id\":\"UTC\"}},\"dayOfMonth\":1,\"dayOfWeek\":3,\"dayOfYear\":335,\"equalNow\":false,\"era\":1,\"hourOfDay\":0,\"millis\":1638318911793,\"millisOfDay\":2111793,\"millisOfSecond\":793,\"minuteOfDay\":35,\"minuteOfHour\":35,\"monthOfYear\":12,\"secondOfDay\":2111,\"secondOfMinute\":11,\"weekOfWeekyear\":48,\"weekyear\":2021,\"year\":2021,\"yearOfCentury\":21,\"yearOfEra\":2021,\"zone\":{\"fixed\":true,\"id\":\"UTC\"}}}", output);
+    Assert.assertEquals(
+        "{\"type\":\"period\",\"period\":\"PT6H\",\"timeZone\":\"UTC\",\"origin\":\"2021-12-01T00:35:11.793Z\"}",
+        output
+    );
   }
 
   @Test
   public void testNoneGranularity()
   {
     String output = informationSchema.getReadableGranularity(new NoneGranularity());
-    Assert.assertEquals("NONE", output);
+    Assert.assertEquals("{\"type\":\"none\"}", output);
   }
 
   @Test
   public void testDurationGranularity()
   {
-    String output = informationSchema.getReadableGranularity(new DurationGranularity(100000000000023L, 10000000000000023L));
-    Assert.assertEquals("{\"duration\":100000000000023,\"origin\":{\"afterNow\":true,\"beforeNow\":false,\"centuryOfEra\":51,\"chronology\":{\"zone\":{\"fixed\":true,\"id\":\"UTC\"}},\"dayOfMonth\":16,\"dayOfWeek\":3,\"dayOfYear\":320,\"equalNow\":false,\"era\":1,\"hourOfDay\":9,\"millis\":99999999997746,\"millisOfDay\":35197746,\"millisOfSecond\":746,\"minuteOfDay\":586,\"minuteOfHour\":46,\"monthOfYear\":11,\"secondOfDay\":35197,\"secondOfMinute\":37,\"weekOfWeekyear\":46,\"weekyear\":5138,\"year\":5138,\"yearOfCentury\":38,\"yearOfEra\":5138,\"zone\":{\"fixed\":true,\"id\":\"UTC\"}},\"cacheKey\":\"AABa8xB6QBcAAFrzEHo3Mg==\",\"durationMillis\":100000000000023}", output);
+    String output = informationSchema.getReadableGranularity(new DurationGranularity(
+        100000000000023L,
+        10000000000000023L
+    ));
+    Assert.assertEquals(
+        "{\"type\":\"duration\",\"duration\":100000000000023,\"origin\":\"5138-11-16T09:46:37.746Z\"}",
+        output
+    );
   }
 
   @Test
   public void testAllGranularity()
   {
     String output = informationSchema.getReadableGranularity(new AllGranularity());
-    Assert.assertEquals("ALL", output);
+    Assert.assertEquals("{\"type\":\"all\"}", output);
   }
 
   @Test
   public void testStandardGranularities()
   {
     String output = informationSchema.getReadableGranularity(Granularities.YEAR);
-    Assert.assertEquals("YEAR", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"P1Y\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.QUARTER);
-    Assert.assertEquals("QUARTER", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"P3M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.MONTH);
-    Assert.assertEquals("MONTH", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"P1M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.WEEK);
-    Assert.assertEquals("WEEK", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"P1W\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.DAY);
-    Assert.assertEquals("DAY", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"P1D\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.SIX_HOUR);
-    Assert.assertEquals("SIX_HOUR", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT6H\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.HOUR);
-    Assert.assertEquals("HOUR", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT1H\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.THIRTY_MINUTE);
-    Assert.assertEquals("THIRTY_MINUTE", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT30M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.FIFTEEN_MINUTE);
-    Assert.assertEquals("FIFTEEN_MINUTE", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT15M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.TEN_MINUTE);
-    Assert.assertEquals("TEN_MINUTE", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT10M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.FIVE_MINUTE);
-    Assert.assertEquals("FIVE_MINUTE", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT5M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.MINUTE);
-    Assert.assertEquals("MINUTE", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT1M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.SECOND);
-    Assert.assertEquals("SECOND", output);
-    output = informationSchema.getReadableGranularity(Granularities.ALL);
-    Assert.assertEquals("ALL", output);
+    Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT1S\",\"timeZone\":\"UTC\",\"origin\":null}", output);
     output = informationSchema.getReadableGranularity(Granularities.NONE);
-    Assert.assertEquals("NONE", output);
+    Assert.assertEquals("{\"type\":\"none\"}", output);
+    output = informationSchema.getReadableGranularity(Granularities.ALL);
+    Assert.assertEquals("{\"type\":\"all\"}", output);
   }
 }

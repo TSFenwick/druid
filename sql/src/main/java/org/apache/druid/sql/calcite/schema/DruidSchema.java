@@ -116,20 +116,20 @@ public class DruidSchema extends AbstractSchema
   /**
    * DataSource -> Segment -> AvailableSegmentMetadata(contains RowSignature) for that segment.
    * Use SortedMap for segments so they are merged in deterministic order, from older to newer.
-   *
+   * <p>
    * This map is updated by these two threads.
-   *
+   * <p>
    * - {@link #callbackExec} can update it in {@link #addSegment}, {@link #removeServerSegment},
-   *   and {@link #removeSegment}.
+   * and {@link #removeSegment}.
    * - {@link #cacheExec} can update it in {@link #refreshSegmentsForDataSource}.
-   *
+   * <p>
    * While it is being updated, this map is read by these two types of thread.
-   *
+   * <p>
    * - {@link #cacheExec} can iterate all {@link AvailableSegmentMetadata}s per datasource.
-   *   See {@link #buildDruidTable}.
+   * See {@link #buildDruidTable}.
    * - Query threads can create a snapshot of the entire map for processing queries on the system table.
-   *   See {@link #getSegmentMetadataSnapshot()}.
-   *
+   * See {@link #getSegmentMetadataSnapshot()}.
+   * <p>
    * As the access pattern of this map is read-intensive, we should minimize the contention between writers and readers.
    * Since there are two threads that can update this map at the same time, those writers should lock the inner map
    * first and then lock the entry before it updates segment metadata. This can be done using
@@ -154,7 +154,7 @@ public class DruidSchema extends AbstractSchema
    *     }
    *   );
    * </pre>
-   *
+   * <p>
    * Readers can simply delegate the locking to the concurrent map and iterate map entries.
    */
   private final ConcurrentHashMap<String, ConcurrentSkipListMap<SegmentId, AvailableSegmentMetadata>> segmentMetadataInfo
@@ -166,10 +166,10 @@ public class DruidSchema extends AbstractSchema
   /**
    * This lock coordinates the access from multiple threads to those variables guarded by this lock.
    * Currently, there are 2 threads that can access these variables.
-   *
+   * <p>
    * - {@link #callbackExec} executes the timeline callbacks whenever BrokerServerView changes.
    * - {@link #cacheExec} periodically refreshes segment metadata and {@link DruidTable} if necessary
-   *   based on the information collected via timeline callbacks.
+   * based on the information collected via timeline callbacks.
    */
   private final Object lock = new Object();
 
@@ -759,15 +759,28 @@ public class DruidSchema extends AbstractSchema
   {
     ConcurrentSkipListMap<SegmentId, AvailableSegmentMetadata> segmentsMap = segmentMetadataInfo.get(dataSource);
     final Map<String, ColumnType> columnTypes = new TreeMap<>();
-    boolean isRollupChanged = false;
-
-    boolean isRollup = false;
+    boolean isRollupSet = false;
+    boolean isQueryGranularitySet = false;
+    Boolean isRollup = false;
     Granularity queryGranularity = null;
     if (segmentsMap != null) {
       for (AvailableSegmentMetadata availableSegmentMetadata : segmentsMap.values()) {
         final RowSignature rowSignature = availableSegmentMetadata.getRowSignature();
-        isRollup = availableSegmentMetadata.isRollup();
-        queryGranularity = availableSegmentMetadata.getGranularity();
+        boolean newIsRollup = availableSegmentMetadata.isRollup();
+        if (!isRollupSet) {
+          isRollup = newIsRollup;
+          isRollupSet = true;
+        } else if (isRollup != newIsRollup) {
+          isRollup = null;
+        }
+        Granularity newQueryGranularity = availableSegmentMetadata.getGranularity();
+        if (!isQueryGranularitySet && newQueryGranularity != null) {
+          queryGranularity = newQueryGranularity;
+          isQueryGranularitySet = true;
+        } else if (newQueryGranularity != null && Granularity.IS_FINER_THAN.compare(queryGranularity, newQueryGranularity) < 0) {
+          queryGranularity = newQueryGranularity;
+        }
+
         if (rowSignature != null) {
           for (String column : rowSignature.getColumnNames()) {
             // Newer column types should override older ones.

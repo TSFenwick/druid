@@ -45,7 +45,7 @@ public class DruidTable implements TranslatableTable
   private final RowSignature rowSignature;
   private final boolean joinable;
   private final boolean broadcast;
-  private final boolean rollup;
+  private final Boolean rollup;
   private final Granularity queryGranularity;
 
   public DruidTable(
@@ -53,7 +53,7 @@ public class DruidTable implements TranslatableTable
       final RowSignature rowSignature,
       final boolean isJoinable,
       final boolean isBroadcast,
-      boolean rollup,
+      Boolean rollup,
       Granularity queryGranularity
   )
   {
@@ -109,11 +109,23 @@ public class DruidTable implements TranslatableTable
     return false;
   }
 
-  public boolean isRollup()
+  /**
+   * Returns whether a table was rolled up. will retun null if the rollup state is mixed.
+   *
+   * @return a true if it is rolled up false if not and null if the table has mixed segments
+   */
+  public Boolean isRollup()
   {
     return rollup;
   }
 
+  /**
+   * Returns the greater QueryGranularity of all the segments in the table.
+   *
+   * if one segment is granularity of MINUTE and another other is HOUR. this will return HOUR
+   *
+   * @return the coarser query granularity. of all granularities.
+   */
   public Granularity getQueryGranularity()
   {
     return queryGranularity;
