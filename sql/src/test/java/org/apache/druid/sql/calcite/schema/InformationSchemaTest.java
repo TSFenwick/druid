@@ -19,6 +19,7 @@
 
 package org.apache.druid.sql.calcite.schema;
 
+import com.google.common.collect.ImmutableSet;
 import org.apache.druid.java.util.common.granularity.AllGranularity;
 import org.apache.druid.java.util.common.granularity.DurationGranularity;
 import org.apache.druid.java.util.common.granularity.Granularities;
@@ -45,13 +46,13 @@ public class InformationSchemaTest
   @Test
   public void testPeriodGranularity()
   {
-    String output = informationSchema.getReadableGranularity(new PeriodGranularity(
+    String output = informationSchema.getReadableGranularity(ImmutableSet.of(new PeriodGranularity(
         Period.hours(6),
         DateTime.parse("2021-11-30T16:35:11.793-08:00"),
         DateTimeZone.UTC
-    ));
+    )));
     Assert.assertEquals(
-        "{\"type\":\"period\",\"period\":\"PT6H\",\"timeZone\":\"UTC\",\"origin\":\"2021-12-01T00:35:11.793Z\"}",
+        "[{\"type\":\"period\",\"period\":\"PT6H\",\"timeZone\":\"UTC\",\"origin\":\"2021-12-01T00:35:11.793Z\"}]",
         output
     );
   }
@@ -59,17 +60,17 @@ public class InformationSchemaTest
   @Test
   public void testNoneGranularity()
   {
-    String output = informationSchema.getReadableGranularity(new NoneGranularity());
+    String output = informationSchema.getReadableGranularity(ImmutableSet.of(new NoneGranularity(), Granularities.MINUTE));
     Assert.assertEquals("{\"type\":\"none\"}", output);
   }
 
   @Test
   public void testDurationGranularity()
   {
-    String output = informationSchema.getReadableGranularity(new DurationGranularity(
+    String output = informationSchema.getReadableGranularity(ImmutableSet.of(new DurationGranularity(
         100000000000023L,
         10000000000000023L
-    ));
+    )));
     Assert.assertEquals(
         "{\"type\":\"duration\",\"duration\":100000000000023,\"origin\":\"5138-11-16T09:46:37.746Z\"}",
         output
@@ -79,42 +80,42 @@ public class InformationSchemaTest
   @Test
   public void testAllGranularity()
   {
-    String output = informationSchema.getReadableGranularity(new AllGranularity());
+    String output = informationSchema.getReadableGranularity(ImmutableSet.of(new AllGranularity()));
     Assert.assertEquals("{\"type\":\"all\"}", output);
   }
 
   @Test
   public void testStandardGranularities()
   {
-    String output = informationSchema.getReadableGranularity(Granularities.YEAR);
+    String output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.YEAR));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"P1Y\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.QUARTER);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.QUARTER));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"P3M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.MONTH);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.MONTH));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"P1M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.WEEK);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.WEEK));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"P1W\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.DAY);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.DAY));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"P1D\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.SIX_HOUR);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.SIX_HOUR));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT6H\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.HOUR);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.HOUR));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT1H\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.THIRTY_MINUTE);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.THIRTY_MINUTE));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT30M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.FIFTEEN_MINUTE);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.FIFTEEN_MINUTE));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT15M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.TEN_MINUTE);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.TEN_MINUTE));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT10M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.FIVE_MINUTE);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.FIVE_MINUTE));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT5M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.MINUTE);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.MINUTE));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT1M\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.SECOND);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.SECOND));
     Assert.assertEquals("{\"type\":\"period\",\"period\":\"PT1S\",\"timeZone\":\"UTC\",\"origin\":null}", output);
-    output = informationSchema.getReadableGranularity(Granularities.NONE);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.NONE));
     Assert.assertEquals("{\"type\":\"none\"}", output);
-    output = informationSchema.getReadableGranularity(Granularities.ALL);
+    output = informationSchema.getReadableGranularity(ImmutableSet.of(Granularities.ALL));
     Assert.assertEquals("{\"type\":\"all\"}", output);
   }
 }

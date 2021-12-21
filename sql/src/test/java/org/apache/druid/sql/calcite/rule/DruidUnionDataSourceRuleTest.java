@@ -39,6 +39,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -53,7 +54,8 @@ public class DruidUnionDataSourceRuleTest
                   .build(),
       false,
       false,
-      false, Granularities.DAY
+      false,
+      Collections.singletonList(Granularities.DAY)
   );
 
   @Test

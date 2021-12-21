@@ -49,8 +49,6 @@ import org.apache.calcite.schema.impl.AbstractSchema;
 import org.apache.calcite.schema.impl.AbstractTable;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.druid.java.util.common.granularity.Granularity;
-import org.apache.druid.java.util.common.granularity.JsonMappablePeriodGranularity;
-import org.apache.druid.java.util.common.granularity.PeriodGranularity;
 import org.apache.druid.java.util.emitter.EmittingLogger;
 import org.apache.druid.segment.column.ColumnType;
 import org.apache.druid.segment.column.RowSignature;
@@ -244,7 +242,7 @@ public class InformationSchema extends AbstractSchema
                                   isJoinable = druidTable.isJoinable();
                                   isBroadcast = druidTable.isBroadcast();
                                   isRollup = druidTable.isRollup();
-                                  granularityType = getReadableGranularity(druidTable.getQueryGranularity());
+                                  granularityType = getReadableGranularity(druidTable.getQueryGranularities());
                                 } else {
                                   isJoinable = false;
                                   isBroadcast = false;
@@ -317,18 +315,14 @@ public class InformationSchema extends AbstractSchema
   }
 
   @VisibleForTesting
-  String getReadableGranularity(Granularity queryGranularity)
+  String getReadableGranularity(Collection<Granularity> queryGranularities)
   {
-    if (queryGranularity instanceof PeriodGranularity) {
-      PeriodGranularity periodGranularity = (PeriodGranularity) queryGranularity;
-      queryGranularity = new JsonMappablePeriodGranularity(periodGranularity);
-    }
     try {
-      String granularity = objectMapper.writeValueAsString(queryGranularity);
+      String granularity = objectMapper.writeValueAsString(queryGranularities);
       return granularity;
     }
     catch (JsonProcessingException e) {
-      log.error(e, "Couldn't turn granularity %s into a json object", queryGranularity);
+      log.error(e, "Couldn't turn granularity %s into a json object", queryGranularities);
       // what should happen here? exception is pushed up or we fill in a value that says ERROR or something
       return "ERROR";
     }

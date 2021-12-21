@@ -36,6 +36,7 @@ import org.apache.druid.java.util.common.granularity.Granularity;
 import org.apache.druid.query.DataSource;
 import org.apache.druid.segment.column.RowSignature;
 
+import java.util.Collection;
 import java.util.Objects;
 
 
@@ -46,7 +47,7 @@ public class DruidTable implements TranslatableTable
   private final boolean joinable;
   private final boolean broadcast;
   private final Boolean rollup;
-  private final Granularity queryGranularity;
+  private final Collection<Granularity> queryGranularity;
 
   public DruidTable(
       final DataSource dataSource,
@@ -54,7 +55,7 @@ public class DruidTable implements TranslatableTable
       final boolean isJoinable,
       final boolean isBroadcast,
       Boolean rollup,
-      Granularity queryGranularity
+      Collection<Granularity> queryGranularity
   )
   {
     this.dataSource = Preconditions.checkNotNull(dataSource, "dataSource");
@@ -126,7 +127,7 @@ public class DruidTable implements TranslatableTable
    *
    * @return the coarser query granularity. of all granularities.
    */
-  public Granularity getQueryGranularity()
+  public Collection<Granularity> getQueryGranularities()
   {
     return queryGranularity;
   }

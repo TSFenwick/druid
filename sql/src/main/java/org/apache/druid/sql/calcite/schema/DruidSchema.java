@@ -40,6 +40,8 @@ import org.apache.druid.java.util.common.DateTimes;
 import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.common.concurrent.Execs;
 import org.apache.druid.java.util.common.granularity.Granularity;
+import org.apache.druid.java.util.common.granularity.JsonMappablePeriodGranularity;
+import org.apache.druid.java.util.common.granularity.PeriodGranularity;
 import org.apache.druid.java.util.common.guava.Sequence;
 import org.apache.druid.java.util.common.guava.Yielder;
 import org.apache.druid.java.util.common.guava.Yielders;
@@ -68,6 +70,7 @@ import org.apache.druid.timeline.DataSegment;
 import org.apache.druid.timeline.SegmentId;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -760,9 +763,8 @@ public class DruidSchema extends AbstractSchema
     ConcurrentSkipListMap<SegmentId, AvailableSegmentMetadata> segmentsMap = segmentMetadataInfo.get(dataSource);
     final Map<String, ColumnType> columnTypes = new TreeMap<>();
     boolean isRollupSet = false;
-    boolean isQueryGranularitySet = false;
     Boolean isRollup = false;
-    Granularity queryGranularity = null;
+    Collection<Granularity> queryGranularities = new TreeSet<>(Granularity.IS_FINER_THAN);
     if (segmentsMap != null) {
       for (AvailableSegmentMetadata availableSegmentMetadata : segmentsMap.values()) {
         final RowSignature rowSignature = availableSegmentMetadata.getRowSignature();
@@ -773,13 +775,7 @@ public class DruidSchema extends AbstractSchema
         } else if (isRollup != newIsRollup) {
           isRollup = null;
         }
-        Granularity newQueryGranularity = availableSegmentMetadata.getGranularity();
-        if (!isQueryGranularitySet && newQueryGranularity != null) {
-          queryGranularity = newQueryGranularity;
-          isQueryGranularitySet = true;
-        } else if (newQueryGranularity != null && Granularity.IS_FINER_THAN.compare(queryGranularity, newQueryGranularity) < 0) {
-          queryGranularity = newQueryGranularity;
-        }
+        queryGranularities.add(convertGranularity(availableSegmentMetadata.getGranularity()));
 
         if (rowSignature != null) {
           for (String column : rowSignature.getColumnNames()) {
@@ -812,7 +808,15 @@ public class DruidSchema extends AbstractSchema
     } else {
       tableDataSource = new TableDataSource(dataSource);
     }
-    return new DruidTable(tableDataSource, builder.build(), isJoinable, isBroadcast, isRollup, queryGranularity);
+    return new DruidTable(tableDataSource, builder.build(), isJoinable, isBroadcast, isRollup, queryGranularities);
+  }
+
+  private Granularity convertGranularity(Granularity granularity)
+  {
+    if (granularity instanceof PeriodGranularity) {
+      return new JsonMappablePeriodGranularity((PeriodGranularity) granularity);
+    }
+    return granularity;
   }
 
   @VisibleForTesting
