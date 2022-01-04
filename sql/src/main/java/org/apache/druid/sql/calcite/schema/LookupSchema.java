@@ -61,7 +61,7 @@ public class LookupSchema extends AbstractSchema
       // (if we ignore lookup tiers...)
       tableMapBuilder.put(
           lookupName,
-          new DruidTable(new LookupDataSource(lookupName), ROW_SIGNATURE, null, true, true)
+          new DruidTable(new LookupDataSource(lookupName), ROW_SIGNATURE, null, true, true, false, null)
       );
     }
 

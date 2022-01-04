@@ -19,6 +19,9 @@
 
 package org.apache.druid.sql.calcite.schema;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
@@ -45,6 +48,7 @@ import org.apache.calcite.schema.TableMacro;
 import org.apache.calcite.schema.impl.AbstractSchema;
 import org.apache.calcite.schema.impl.AbstractTable;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.druid.java.util.common.granularity.Granularity;
 import org.apache.druid.java.util.emitter.EmittingLogger;
 import org.apache.druid.segment.column.ColumnType;
 import org.apache.druid.segment.column.RowSignature;
@@ -90,6 +94,8 @@ public class InformationSchema extends AbstractSchema
       .add("TABLE_TYPE", ColumnType.STRING)
       .add("IS_JOINABLE", ColumnType.STRING)
       .add("IS_BROADCAST", ColumnType.STRING)
+      .add("IS_ROLLUP", ColumnType.STRING)
+      .add("QUERY_GRANULARITY", ColumnType.STRING)
       .build();
   private static final RowSignature COLUMNS_SIGNATURE = RowSignature
       .builder()
@@ -119,11 +125,13 @@ public class InformationSchema extends AbstractSchema
   private final DruidSchemaCatalog rootSchema;
   private final Map<String, Table> tableMap;
   private final AuthorizerMapper authorizerMapper;
+  private final ObjectMapper objectMapper;
 
   @Inject
   public InformationSchema(
       @Named(DruidCalciteSchemaModule.INCOMPLETE_SCHEMA) final DruidSchemaCatalog rootSchema,
-      final AuthorizerMapper authorizerMapper
+      final AuthorizerMapper authorizerMapper,
+      final ObjectMapper objectMapper
   )
   {
     this.rootSchema = Preconditions.checkNotNull(rootSchema, "rootSchema");
@@ -133,6 +141,7 @@ public class InformationSchema extends AbstractSchema
         COLUMNS_TABLE, new ColumnsTable()
     );
     this.authorizerMapper = authorizerMapper;
+    this.objectMapper = objectMapper;
   }
 
   @Override
@@ -225,13 +234,19 @@ public class InformationSchema extends AbstractSchema
                                 final Table table = subSchema.getTable(tableName);
                                 final boolean isJoinable;
                                 final boolean isBroadcast;
+                                final Boolean isRollup; // used to model the mixed state of being null
+                                final String granularityType;
                                 if (table instanceof DruidTable) {
                                   DruidTable druidTable = (DruidTable) table;
                                   isJoinable = druidTable.isJoinable();
                                   isBroadcast = druidTable.isBroadcast();
+                                  isRollup = druidTable.isRollup();
+                                  granularityType = getReadableGranularity(druidTable.getQueryGranularities());
                                 } else {
                                   isJoinable = false;
                                   isBroadcast = false;
+                                  isRollup = Boolean.FALSE;
+                                  granularityType = null;
                                 }
 
                                 return new Object[]{
@@ -240,7 +255,9 @@ public class InformationSchema extends AbstractSchema
                                     tableName, // TABLE_NAME
                                     table.getJdbcTableType().toString(), // TABLE_TYPE
                                     isJoinable ? INFO_TRUE : INFO_FALSE, // IS_JOINABLE
-                                    isBroadcast ? INFO_TRUE : INFO_FALSE // IS_BROADCAST
+                                    isBroadcast ? INFO_TRUE : INFO_FALSE, // IS_BROADCAST
+                                    computeIsRollupTableValue(isRollup), // IS_ROLLUP
+                                    (granularityType == null) ? "NULL" : granularityType // GRANULARITY_TYPE
                                 };
                               }
                           ),
@@ -292,6 +309,28 @@ public class InformationSchema extends AbstractSchema
     {
       return TableType.SYSTEM_TABLE;
     }
+  }
+
+  @VisibleForTesting
+  String getReadableGranularity(Collection<Granularity> queryGranularities)
+  {
+    try {
+      String granularity = objectMapper.writeValueAsString(queryGranularities);
+      return granularity;
+    }
+    catch (JsonProcessingException e) {
+      log.error(e, "Couldn't turn granularity %s into a json object", queryGranularities);
+      // what should happen here? exception is pushed up or we fill in a value that says ERROR or something
+      return "ERROR";
+    }
+  }
+
+  private String computeIsRollupTableValue(Boolean isRollup)
+  {
+    if (isRollup == null) {
+      return "NULL";
+    }
+    return (isRollup) ? INFO_TRUE : INFO_FALSE;
   }
 
   class ColumnsTable extends AbstractTable implements ScannableTable

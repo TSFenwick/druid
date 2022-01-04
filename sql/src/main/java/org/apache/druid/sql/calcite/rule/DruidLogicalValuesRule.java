@@ -81,7 +81,9 @@ public class DruidLogicalValuesRule extends RelOptRule
         rowSignature,
         null,
         true,
-        false
+        false,
+        false,
+        null // using null here because none is a type of query granularity
     );
     call.transformTo(
         DruidQueryRel.scanValues(values, druidTable, plannerContext)

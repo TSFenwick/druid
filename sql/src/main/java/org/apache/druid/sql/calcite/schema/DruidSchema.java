@@ -41,6 +41,9 @@ import org.apache.druid.guice.ManageLifecycle;
 import org.apache.druid.java.util.common.DateTimes;
 import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.common.concurrent.Execs;
+import org.apache.druid.java.util.common.granularity.Granularity;
+import org.apache.druid.java.util.common.granularity.JsonMappablePeriodGranularity;
+import org.apache.druid.java.util.common.granularity.PeriodGranularity;
 import org.apache.druid.java.util.common.guava.Sequence;
 import org.apache.druid.java.util.common.guava.Yielder;
 import org.apache.druid.java.util.common.guava.Yielders;
@@ -69,6 +72,7 @@ import org.apache.druid.timeline.DataSegment;
 import org.apache.druid.timeline.SegmentId;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -467,7 +471,8 @@ public class DruidSchema extends AbstractSchema
                       // segmentReplicatable is used to determine if segments are served by historical or realtime servers
                       long isRealtime = server.isSegmentReplicationTarget() ? 0 : 1;
                       segmentMetadata = AvailableSegmentMetadata
-                          .builder(segment, isRealtime, ImmutableSet.of(server), null, DEFAULT_NUM_ROWS) // Added without needing a refresh
+                          // TODO figure out isRollup and Granularity
+                          .builder(segment, isRealtime, ImmutableSet.of(server), null, DEFAULT_NUM_ROWS, true, null) // Added without needing a refresh
                           .build();
                       markSegmentAsNeedRefresh(segment.getId());
                       if (!server.isSegmentReplicationTarget()) {
@@ -743,6 +748,8 @@ public class DruidSchema extends AbstractSchema
                               .from(segmentMetadata)
                               .withRowSignature(rowSignature)
                               .withNumRows(analysis.getNumRows())
+                              .withGranularity(analysis.getQueryGranularity())
+                              .withRollup(analysis.isRollup())
                               .build();
                           retVal.add(segmentId);
                           return updatedSegmentMetadata;
@@ -783,10 +790,21 @@ public class DruidSchema extends AbstractSchema
   {
     ConcurrentSkipListMap<SegmentId, AvailableSegmentMetadata> segmentsMap = segmentMetadataInfo.get(dataSource);
     final Map<String, ColumnType> columnTypes = new TreeMap<>();
-
+    boolean isRollupSet = false;
+    Boolean isRollup = false;
+    Collection<Granularity> queryGranularities = new TreeSet<>(Granularity.IS_FINER_THAN);
     if (segmentsMap != null) {
       for (AvailableSegmentMetadata availableSegmentMetadata : segmentsMap.values()) {
         final RowSignature rowSignature = availableSegmentMetadata.getRowSignature();
+        boolean newIsRollup = availableSegmentMetadata.isRollup();
+        if (!isRollupSet) {
+          isRollup = newIsRollup;
+          isRollupSet = true;
+        } else if (isRollup != newIsRollup) {
+          isRollup = null;
+        }
+        queryGranularities.add(convertGranularity(availableSegmentMetadata.getGranularity()));
+
         if (rowSignature != null) {
           for (String column : rowSignature.getColumnNames()) {
             // Newer column types should override older ones.
@@ -818,8 +836,17 @@ public class DruidSchema extends AbstractSchema
     } else {
       tableDataSource = new TableDataSource(dataSource);
     }
-    return new DruidTable(tableDataSource, builder.build(), null, isJoinable, isBroadcast);
+    return new DruidTable(tableDataSource, builder.build(), null, isJoinable, isBroadcast, isRollup, queryGranularities);
   }
+
+  private Granularity convertGranularity(Granularity granularity)
+  {
+    if (granularity instanceof PeriodGranularity) {
+      return new JsonMappablePeriodGranularity((PeriodGranularity) granularity);
+    }
+    return granularity;
+  }
+
 
   @VisibleForTesting
   Map<SegmentId, AvailableSegmentMetadata> getSegmentMetadataSnapshot()
@@ -892,7 +919,7 @@ public class DruidSchema extends AbstractSchema
         new AllColumnIncluderator(),
         false,
         brokerInternalQueryConfig.getContext(),
-        EnumSet.noneOf(SegmentMetadataQuery.AnalysisType.class),
+        EnumSet.of(SegmentMetadataQuery.AnalysisType.ROLLUP, SegmentMetadataQuery.AnalysisType.QUERYGRANULARITY),
         false,
         false
     );

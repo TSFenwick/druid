@@ -34,6 +34,7 @@ import org.apache.druid.guice.annotations.Json;
 import org.apache.druid.segment.column.RowSignature;
 import org.apache.druid.sql.calcite.table.DruidTable;
 
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -64,7 +65,9 @@ public class ExternalTableMacro implements TableMacro
           signature,
           jsonMapper,
           false,
-          false
+          false,
+          false,
+          Collections.emptySet()
       );
     }
     catch (JsonProcessingException e) {

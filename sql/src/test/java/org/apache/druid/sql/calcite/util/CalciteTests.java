@@ -1202,7 +1202,8 @@ public class CalciteTests
     InformationSchema informationSchema =
         new InformationSchema(
             catalog,
-            authorizerMapper
+            authorizerMapper,
+            TestHelper.JSON_MAPPER
         );
     rootSchema.add(CalciteTests.DRUID_SCHEMA_NAME, druidSchema);
     rootSchema.add(CalciteTests.INFORMATION_SCHEMA_NAME, informationSchema);

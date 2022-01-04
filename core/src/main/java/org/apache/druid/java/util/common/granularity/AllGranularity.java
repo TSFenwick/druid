@@ -19,16 +19,22 @@
 
 package org.apache.druid.java.util.common.granularity;
 
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonSerializable;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.jsontype.TypeSerializer;
 import com.google.common.collect.ImmutableList;
 import org.apache.druid.java.util.common.DateTimes;
 import org.joda.time.DateTime;
 import org.joda.time.Interval;
 import org.joda.time.format.DateTimeFormatter;
 
+import java.io.IOException;
+
 /**
  * AllGranularty buckets everything into a single bucket
  */
-public class AllGranularity extends Granularity
+public class AllGranularity extends Granularity implements JsonSerializable
 {
   /**
    * This constructor is public b/c it is serialized and deserialized
@@ -118,5 +124,25 @@ public class AllGranularity extends Granularity
   public String toString()
   {
     return "AllGranularity";
+  }
+
+  @Override
+  public void serialize(JsonGenerator jsonGenerator, SerializerProvider serializerProvider)
+      throws IOException
+  {
+    jsonGenerator.writeStartObject();
+    jsonGenerator.writeStringField("type", "all");
+    jsonGenerator.writeEndObject();
+
+  }
+
+  @Override
+  public void serializeWithType(
+      JsonGenerator jsonGenerator,
+      SerializerProvider serializerProvider,
+      TypeSerializer typeSerializer
+  ) throws IOException
+  {
+    serialize(jsonGenerator, serializerProvider);
   }
 }

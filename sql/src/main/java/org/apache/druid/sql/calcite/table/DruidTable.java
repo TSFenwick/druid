@@ -33,12 +33,14 @@ import org.apache.calcite.schema.Statistics;
 import org.apache.calcite.schema.TranslatableTable;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlNode;
+import org.apache.druid.java.util.common.granularity.Granularity;
 import org.apache.druid.query.DataSource;
 import org.apache.druid.segment.column.RowSignature;
 import org.apache.druid.sql.calcite.external.ExternalDataSource;
 import org.apache.druid.sql.calcite.external.ExternalTableScan;
 
 import javax.annotation.Nullable;
+import java.util.Collection;
 import java.util.Objects;
 
 public class DruidTable implements TranslatableTable
@@ -50,13 +52,17 @@ public class DruidTable implements TranslatableTable
   private final ObjectMapper objectMapper;
   private final boolean joinable;
   private final boolean broadcast;
+  private final Boolean rollup;
+  private final Collection<Granularity> queryGranularities;
 
   public DruidTable(
       final DataSource dataSource,
       final RowSignature rowSignature,
       @Nullable final ObjectMapper objectMapper,
       final boolean isJoinable,
-      final boolean isBroadcast
+      final boolean isBroadcast,
+      final Boolean isRollup,
+      final Collection<Granularity> queryGranularities
   )
   {
     this.dataSource = Preconditions.checkNotNull(dataSource, "dataSource");
@@ -64,6 +70,8 @@ public class DruidTable implements TranslatableTable
     this.objectMapper = objectMapper;
     this.joinable = isJoinable;
     this.broadcast = isBroadcast;
+    this.rollup = isRollup;
+    this.queryGranularities = queryGranularities;
 
     if (dataSource instanceof ExternalDataSource && objectMapper == null) {
       // objectMapper is used by ExternalTableScan to generate its digest.
@@ -113,6 +121,26 @@ public class DruidTable implements TranslatableTable
   public boolean isRolledUp(final String column)
   {
     return false;
+  }
+
+  /**
+   * Returns whether a table was rolled up. will retun null if the rollup state is mixed.
+   *
+   * @return a true if it is rolled up false if not and null if the table has mixed segments
+   */
+  public Boolean isRollup()
+  {
+    return rollup;
+  }
+
+  /**
+   * Returns all the query granularities in the table.
+   **
+   * @return A collection of all granularities.
+   */
+  public Collection<Granularity> getQueryGranularities()
+  {
+    return queryGranularities;
   }
 
   @Override

@@ -412,6 +412,10 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
   public void testDatabaseMetaDataTables() throws Exception
   {
     final DatabaseMetaData metaData = client.getMetaData();
+    List<Map<String, Object>> actualRows = getRows(
+        metaData.getTables(null, "druid", "%", null),
+        ImmutableSet.of("TABLE_CAT", "TABLE_NAME", "TABLE_SCHEM", "TABLE_TYPE")
+    );
     Assert.assertEquals(
         ImmutableList.of(
             row(
@@ -470,10 +474,7 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
                 Pair.of("TABLE_TYPE", "TABLE")
             )
         ),
-        getRows(
-            metaData.getTables(null, "druid", "%", null),
-            ImmutableSet.of("TABLE_CAT", "TABLE_NAME", "TABLE_SCHEM", "TABLE_TYPE")
-        )
+        actualRows
     );
   }
 
@@ -481,6 +482,10 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
   public void testDatabaseMetaDataTablesAsSuperuser() throws Exception
   {
     final DatabaseMetaData metaData = superuserClient.getMetaData();
+    List<Map<String, Object>> actualRows = getRows(
+        metaData.getTables(null, "druid", "%", null),
+        ImmutableSet.of("TABLE_CAT", "TABLE_NAME", "TABLE_SCHEM", "TABLE_TYPE")
+    );
     Assert.assertEquals(
         ImmutableList.of(
             row(
@@ -544,10 +549,7 @@ public abstract class DruidAvaticaHandlerTest extends CalciteTestBase
                 Pair.of("TABLE_TYPE", "TABLE")
             )
         ),
-        getRows(
-            metaData.getTables(null, "druid", "%", null),
-            ImmutableSet.of("TABLE_CAT", "TABLE_NAME", "TABLE_SCHEM", "TABLE_TYPE")
-        )
+        actualRows
     );
   }
 

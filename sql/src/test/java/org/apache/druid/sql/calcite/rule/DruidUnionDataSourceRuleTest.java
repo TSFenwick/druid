@@ -52,7 +52,9 @@ public class DruidUnionDataSourceRuleTest
                   .build(),
       null,
       false,
-      false
+      false,
+      false,
+      null
   );
 
   @Test
