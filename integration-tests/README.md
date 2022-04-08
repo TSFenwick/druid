@@ -123,6 +123,27 @@ Druid routers for security group integration test (permissive tls, no client aut
    mvn verify -P integration-tests -pl integration-tests -Ddocker.build.skip=true -Ddocker.run.skip=true -Dit.test=<test_name>
    ```
 
+### Running tests from IntelliJ
+
+A prerequisite to run tests from intellij you need a cluster up and running. Modify the run configuration's `VM options` 
+to the values below. 
+
+```
+-Duser.timezone=UTC
+-Dfile.encoding=UTF-8
+-Ddruid.test.config.dockerIp=localhost
+-Ddruid.zk.service.host=localhost
+-Ddruid.client.https.trustStorePath=client_tls/truststore.jks
+-Ddruid.client.https.trustStorePassword=druid123
+-Ddruid.client.https.keyStorePath=client_tls/client.jks
+-Ddruid.client.https.certAlias=druid
+-Ddruid.client.https.keyManagerPassword=druid123
+-Ddruid.client.https.keyStorePassword=druid123
+```
+and to run the test you need to run the test from the test configuration often times found around the top right corner 
+of IntelliJ IDE.
+These values shown above are for the docker compose cluster. For other clusters the values will need to be changed.
+
 ## Docker Compose files
 
 - docker-compose.base.yml
