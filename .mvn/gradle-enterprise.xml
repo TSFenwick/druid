@@ -1,0 +1,14 @@
+<gradleEnterprise>
+  <buildScan>
+    <obfuscation>
+      <!-- Use a redacted value. -->
+      <username>#{sha512(username)}</username>
+      <hostname>#{isTrue(env['CI']) ? 'CI agent' : 'Local agent'}</hostname>
+      <ipAddresses>#{sha512(ipAddresses)}</ipAddresses>
+    </obfuscation>
+    <termsOfService>
+      <url>https://gradle.com/terms-of-service</url>
+      <accept>true</accept>
+    </termsOfService>
+  </buildScan>
+</gradleEnterprise>
