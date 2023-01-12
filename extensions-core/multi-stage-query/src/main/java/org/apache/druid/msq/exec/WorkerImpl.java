@@ -59,6 +59,7 @@ import org.apache.druid.java.util.common.guava.Sequence;
 import org.apache.druid.java.util.common.guava.Sequences;
 import org.apache.druid.java.util.common.io.Closer;
 import org.apache.druid.java.util.common.logger.Logger;
+import org.apache.druid.java.util.emitter.service.ServiceEmitter;
 import org.apache.druid.msq.counters.CounterNames;
 import org.apache.druid.msq.counters.CounterSnapshotsTree;
 import org.apache.druid.msq.counters.CounterTracker;
@@ -1017,7 +1018,9 @@ public class WorkerImpl implements Worker
             frameContext,
             parallelism,
             counters,
-            e -> warningPublisher.publishException(stageDefinition.getStageNumber(), e)
+            (e) -> {
+              warningPublisher.publishException(stageDefinition.getStageNumber(), e);
+            }
         );
 
     final Sequence<WorkerClass> processorSequence = processors.processors();

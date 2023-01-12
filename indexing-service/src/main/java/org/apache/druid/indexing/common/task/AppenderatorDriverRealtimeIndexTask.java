@@ -68,6 +68,7 @@ import org.apache.druid.query.NoopQueryRunner;
 import org.apache.druid.query.Query;
 import org.apache.druid.query.QueryRunner;
 import org.apache.druid.segment.SegmentUtils;
+import org.apache.druid.segment.incremental.EmittingParseExceptionHandler;
 import org.apache.druid.segment.incremental.ParseExceptionHandler;
 import org.apache.druid.segment.incremental.ParseExceptionReport;
 import org.apache.druid.segment.incremental.RowIngestionMeters;
@@ -247,11 +248,12 @@ public class AppenderatorDriverRealtimeIndexTask extends AbstractTask implements
     runThread = Thread.currentThread();
     authorizerMapper = toolbox.getAuthorizerMapper();
     rowIngestionMeters = toolbox.getRowIngestionMetersFactory().createRowIngestionMeters();
-    parseExceptionHandler = new ParseExceptionHandler(
+    parseExceptionHandler = new EmittingParseExceptionHandler(
         rowIngestionMeters,
         spec.getTuningConfig().isLogParseExceptions(),
         spec.getTuningConfig().getMaxParseExceptions(),
-        spec.getTuningConfig().getMaxSavedParseExceptions()
+        spec.getTuningConfig().getMaxSavedParseExceptions(),
+        toolbox.getEmitter()
     );
 
     setupTimeoutAlert();

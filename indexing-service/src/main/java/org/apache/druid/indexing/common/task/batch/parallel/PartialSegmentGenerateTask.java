@@ -39,6 +39,7 @@ import org.apache.druid.indexing.common.task.Tasks;
 import org.apache.druid.indexing.common.task.batch.parallel.iterator.IndexTaskInputRowIteratorBuilder;
 import org.apache.druid.indexing.worker.shuffle.ShuffleDataSegmentPusher;
 import org.apache.druid.query.DruidMetrics;
+import org.apache.druid.segment.incremental.EmittingParseExceptionHandler;
 import org.apache.druid.segment.incremental.ParseExceptionHandler;
 import org.apache.druid.segment.incremental.ParseExceptionReport;
 import org.apache.druid.segment.incremental.RowIngestionMeters;
@@ -179,11 +180,15 @@ abstract class PartialSegmentGenerateTask<T extends GeneratedPartitionsReport> e
     final SegmentAllocatorForBatch segmentAllocator = createSegmentAllocator(toolbox, taskClient);
     final SequenceNameFunction sequenceNameFunction = segmentAllocator.getSequenceNameFunction();
 
-    parseExceptionHandler = new ParseExceptionHandler(
+    parseExceptionHandler = new EmittingParseExceptionHandler(
         buildSegmentsMeters,
         tuningConfig.isLogParseExceptions(),
         tuningConfig.getMaxParseExceptions(),
-        tuningConfig.getMaxSavedParseExceptions()
+        tuningConfig.getMaxSavedParseExceptions(),
+        toolbox.getEmitter(),
+        getId(),
+        getGroupId(),
+        getDataSource()
     );
     final boolean useMaxMemoryEstimates = getContextValue(
         Tasks.USE_MAX_MEMORY_ESTIMATES,

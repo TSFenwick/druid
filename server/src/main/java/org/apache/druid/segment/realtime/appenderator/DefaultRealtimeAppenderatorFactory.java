@@ -30,8 +30,8 @@ import org.apache.druid.query.QueryProcessingPool;
 import org.apache.druid.query.QueryRunnerFactoryConglomerate;
 import org.apache.druid.segment.IndexIO;
 import org.apache.druid.segment.IndexMerger;
+import org.apache.druid.segment.incremental.EmittingParseExceptionHandler;
 import org.apache.druid.segment.incremental.NoopRowIngestionMeters;
-import org.apache.druid.segment.incremental.ParseExceptionHandler;
 import org.apache.druid.segment.incremental.RowIngestionMeters;
 import org.apache.druid.segment.indexing.DataSchema;
 import org.apache.druid.segment.indexing.RealtimeTuningConfig;
@@ -42,6 +42,7 @@ import org.apache.druid.server.coordination.DataSegmentAnnouncer;
 import org.apache.druid.timeline.partition.ShardSpec;
 
 import java.io.File;
+import java.util.Map;
 
 public class DefaultRealtimeAppenderatorFactory implements AppenderatorFactory
 {
@@ -91,8 +92,9 @@ public class DefaultRealtimeAppenderatorFactory implements AppenderatorFactory
   public Appenderator build(
       final DataSchema schema,
       final RealtimeTuningConfig config,
-      final FireDepartmentMetrics metrics
-  )
+      final FireDepartmentMetrics metrics,
+      final Map<String, Object> taskMetadata
+      )
   {
     final RowIngestionMeters rowIngestionMeters = new NoopRowIngestionMeters();
     return Appenderators.createRealtime(
@@ -119,11 +121,12 @@ public class DefaultRealtimeAppenderatorFactory implements AppenderatorFactory
         cacheConfig,
         cachePopulatorStats,
         rowIngestionMeters,
-        new ParseExceptionHandler(
+        new EmittingParseExceptionHandler(
             rowIngestionMeters,
             false,
             config.isReportParseExceptions() ? 0 : Integer.MAX_VALUE,
-            0
+            0,
+            emitter
         ),
         true
     );

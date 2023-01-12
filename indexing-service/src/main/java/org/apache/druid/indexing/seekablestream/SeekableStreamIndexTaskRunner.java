@@ -73,6 +73,7 @@ import org.apache.druid.java.util.common.DateTimes;
 import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.java.util.emitter.EmittingLogger;
+import org.apache.druid.segment.incremental.EmittingParseExceptionHandler;
 import org.apache.druid.segment.incremental.ParseExceptionHandler;
 import org.apache.druid.segment.incremental.ParseExceptionReport;
 import org.apache.druid.segment.incremental.RowIngestionMeters;
@@ -361,11 +362,15 @@ public abstract class SeekableStreamIndexTaskRunner<PartitionIdType, SequenceOff
 
     authorizerMapper = toolbox.getAuthorizerMapper();
     rowIngestionMeters = toolbox.getRowIngestionMetersFactory().createRowIngestionMeters();
-    parseExceptionHandler = new ParseExceptionHandler(
+    parseExceptionHandler = new EmittingParseExceptionHandler(
         rowIngestionMeters,
         tuningConfig.isLogParseExceptions(),
         tuningConfig.getMaxParseExceptions(),
-        tuningConfig.getMaxSavedParseExceptions()
+        tuningConfig.getMaxSavedParseExceptions(),
+        toolbox.getEmitter(),
+        task.getId(),
+        task.getGroupId(),
+        task.getDataSource()
     );
 
     // Now we can initialize StreamChunkReader with the given toolbox.

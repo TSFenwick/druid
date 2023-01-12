@@ -22,15 +22,18 @@ package org.apache.druid.segment.realtime.appenderator;
 import com.fasterxml.jackson.annotation.JacksonInject;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.druid.java.util.emitter.service.ServiceEmitter;
 import org.apache.druid.segment.IndexIO;
 import org.apache.druid.segment.IndexMerger;
+import org.apache.druid.segment.incremental.EmittingParseExceptionHandler;
 import org.apache.druid.segment.incremental.NoopRowIngestionMeters;
-import org.apache.druid.segment.incremental.ParseExceptionHandler;
 import org.apache.druid.segment.incremental.RowIngestionMeters;
 import org.apache.druid.segment.indexing.DataSchema;
 import org.apache.druid.segment.indexing.RealtimeTuningConfig;
 import org.apache.druid.segment.loading.DataSegmentPusher;
 import org.apache.druid.segment.realtime.FireDepartmentMetrics;
+
+import java.util.Map;
 
 
 public class DefaultOfflineAppenderatorFactory implements AppenderatorFactory
@@ -39,23 +42,26 @@ public class DefaultOfflineAppenderatorFactory implements AppenderatorFactory
   private final ObjectMapper objectMapper;
   private final IndexIO indexIO;
   private final IndexMerger indexMerger;
+  private final ServiceEmitter emitter;
 
   @JsonCreator
   public DefaultOfflineAppenderatorFactory(
       @JacksonInject DataSegmentPusher dataSegmentPusher,
       @JacksonInject ObjectMapper objectMapper,
       @JacksonInject IndexIO indexIO,
-      @JacksonInject IndexMerger indexMerger
+      @JacksonInject IndexMerger indexMerger,
+      @JacksonInject ServiceEmitter emitter
   )
   {
     this.dataSegmentPusher = dataSegmentPusher;
     this.objectMapper = objectMapper;
     this.indexIO = indexIO;
     this.indexMerger = indexMerger;
+    this.emitter = emitter;
   }
 
   @Override
-  public Appenderator build(DataSchema schema, RealtimeTuningConfig config, FireDepartmentMetrics metrics)
+  public Appenderator build(DataSchema schema, RealtimeTuningConfig config, FireDepartmentMetrics metrics, Map<String, Object> taskMetadata)
   {
     final RowIngestionMeters rowIngestionMeters = new NoopRowIngestionMeters();
     return Appenderators.createClosedSegmentsOffline(
@@ -68,11 +74,12 @@ public class DefaultOfflineAppenderatorFactory implements AppenderatorFactory
         indexIO,
         indexMerger,
         rowIngestionMeters,
-        new ParseExceptionHandler(
+        new EmittingParseExceptionHandler(
             rowIngestionMeters,
             false,
             config.isReportParseExceptions() ? 0 : Integer.MAX_VALUE,
-            0
+            0,
+            emitter
         ),
         true
     );

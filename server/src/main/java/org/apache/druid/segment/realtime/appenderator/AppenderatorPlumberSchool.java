@@ -31,6 +31,8 @@ import org.apache.druid.segment.realtime.plumber.Plumber;
 import org.apache.druid.segment.realtime.plumber.PlumberSchool;
 import org.apache.druid.server.coordination.DataSegmentAnnouncer;
 
+import java.util.Map;
+
 public class AppenderatorPlumberSchool implements PlumberSchool
 {
   private final AppenderatorFactory appenderatorFactory;
@@ -56,13 +58,15 @@ public class AppenderatorPlumberSchool implements PlumberSchool
   public Plumber findPlumber(
       final DataSchema schema,
       final RealtimeTuningConfig config,
-      final FireDepartmentMetrics metrics
+      final FireDepartmentMetrics metrics,
+      final Map<String, Object> taskMetadata
   )
   {
     final Appenderator appenderator = appenderatorFactory.build(
         schema,
         config,
-        metrics
+        metrics,
+        taskMetaData
     );
 
     return new AppenderatorPlumber(

@@ -52,6 +52,7 @@ import org.apache.druid.java.util.common.granularity.Granularity;
 import org.apache.druid.java.util.common.logger.Logger;
 import org.apache.druid.java.util.common.parsers.CloseableIterator;
 import org.apache.druid.query.DruidMetrics;
+import org.apache.druid.segment.incremental.EmittingParseExceptionHandler;
 import org.apache.druid.segment.incremental.ParseExceptionHandler;
 import org.apache.druid.segment.incremental.ParseExceptionReport;
 import org.apache.druid.segment.incremental.RowIngestionMeters;
@@ -240,11 +241,15 @@ public class SinglePhaseSubTask extends AbstractBatchSubtask implements ChatHand
       toolbox.getChatHandlerProvider().register(getId(), this, false);
 
       rowIngestionMeters = toolbox.getRowIngestionMetersFactory().createRowIngestionMeters();
-      parseExceptionHandler = new ParseExceptionHandler(
+      parseExceptionHandler = new EmittingParseExceptionHandler(
           rowIngestionMeters,
           ingestionSchema.getTuningConfig().isLogParseExceptions(),
           ingestionSchema.getTuningConfig().getMaxParseExceptions(),
-          ingestionSchema.getTuningConfig().getMaxSavedParseExceptions()
+          ingestionSchema.getTuningConfig().getMaxSavedParseExceptions(),
+          toolbox.getEmitter(),
+          getId(),
+          getGroupId(),
+          getDataSource()
       );
 
       final InputSource inputSource = ingestionSchema.getIOConfig().getNonNullInputSource(

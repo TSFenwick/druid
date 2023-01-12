@@ -34,7 +34,9 @@ import org.apache.druid.java.util.common.Pair;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.java.util.common.guava.Sequence;
 import org.apache.druid.java.util.common.guava.Sequences;
+import org.apache.druid.java.util.emitter.service.ServiceEmitter;
 import org.apache.druid.msq.counters.CounterTracker;
+import org.apache.druid.msq.exec.ControllerContext;
 import org.apache.druid.msq.exec.WorkerMemoryParameters;
 import org.apache.druid.msq.input.InputSlice;
 import org.apache.druid.msq.input.InputSliceReader;
@@ -49,6 +51,7 @@ import org.apache.druid.segment.IndexSpec;
 import org.apache.druid.segment.data.CompressionFactory;
 import org.apache.druid.segment.data.CompressionStrategy;
 import org.apache.druid.segment.incremental.AppendableIndexSpec;
+import org.apache.druid.segment.incremental.EmittingParseExceptionHandler;
 import org.apache.druid.segment.incremental.ParseExceptionHandler;
 import org.apache.druid.segment.incremental.RowIngestionMeters;
 import org.apache.druid.segment.indexing.DataSchema;
@@ -77,17 +80,20 @@ public class SegmentGeneratorFrameProcessorFactory
   private final DataSchema dataSchema;
   private final ColumnMappings columnMappings;
   private final MSQTuningConfig tuningConfig;
+  private final ControllerContext context;
 
   @JsonCreator
   public SegmentGeneratorFrameProcessorFactory(
       @JsonProperty("dataSchema") final DataSchema dataSchema,
       @JsonProperty("columnMappings") final ColumnMappings columnMappings,
-      @JsonProperty("tuningConfig") final MSQTuningConfig tuningConfig
+      @JsonProperty("tuningConfig") final MSQTuningConfig tuningConfig,
+      final ControllerContext context
   )
   {
     this.dataSchema = Preconditions.checkNotNull(dataSchema, "dataSchema");
     this.columnMappings = Preconditions.checkNotNull(columnMappings, "columnMappings");
     this.tuningConfig = Preconditions.checkNotNull(tuningConfig, "tuningConfig");
+    this.context = context;
   }
 
   @JsonProperty
@@ -124,12 +130,6 @@ public class SegmentGeneratorFrameProcessorFactory
   {
     final RowIngestionMeters meters = frameContext.rowIngestionMeters();
 
-    final ParseExceptionHandler parseExceptionHandler = new ParseExceptionHandler(
-        meters,
-        TuningConfig.DEFAULT_LOG_PARSE_EXCEPTIONS,
-        TuningConfig.DEFAULT_MAX_PARSE_EXCEPTIONS,
-        TuningConfig.DEFAULT_MAX_SAVED_PARSE_EXCEPTIONS
-    );
 
     // Expect a single input slice.
     final InputSlice slice = Iterables.getOnlyElement(inputSlices);
@@ -148,6 +148,8 @@ public class SegmentGeneratorFrameProcessorFactory
             }
         ));
 
+ServiceEmitter emitter = context.injector().getInstance(ServiceEmitter.class);
+
     final Sequence<SegmentGeneratorFrameProcessor> workers = inputSequence.map(
         readableInputPair -> {
           final StagePartition stagePartition = Preconditions.checkNotNull(readableInputPair.rhs.getStagePartition());
@@ -156,6 +158,16 @@ public class SegmentGeneratorFrameProcessorFactory
           final File persistDirectory = new File(
               frameContext.persistDir(),
               segmentIdWithShardSpec.asSegmentId().toString()
+          );
+          final ParseExceptionHandler parseExceptionHandler = new EmittingParseExceptionHandler(
+              meters,
+              TuningConfig.DEFAULT_LOG_PARSE_EXCEPTIONS,
+              TuningConfig.DEFAULT_MAX_PARSE_EXCEPTIONS,
+              TuningConfig.DEFAULT_MAX_SAVED_PARSE_EXCEPTIONS,
+              emitter,
+              stageDefinition.getId().getQueryId(),
+              idString,
+              this.dataSchema.getDataSource()
           );
 
           // Create directly, without using AppenderatorsManager, because we need different memory overrides due to

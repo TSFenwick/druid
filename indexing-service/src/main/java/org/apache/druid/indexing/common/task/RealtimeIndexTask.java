@@ -49,6 +49,7 @@ import org.apache.druid.query.NoopQueryRunner;
 import org.apache.druid.query.Query;
 import org.apache.druid.query.QueryRunner;
 import org.apache.druid.query.QueryRunnerFactoryConglomerate;
+import org.apache.druid.segment.incremental.EmittingParseExceptionHandler;
 import org.apache.druid.segment.indexing.DataSchema;
 import org.apache.druid.segment.indexing.RealtimeIOConfig;
 import org.apache.druid.segment.indexing.RealtimeTuningConfig;
@@ -367,7 +368,7 @@ public class RealtimeIndexTask extends AbstractTask
         toolbox.getJsonMapper()
     );
 
-    this.plumber = plumberSchool.findPlumber(dataSchema, tuningConfig, metrics);
+    this.plumber = plumberSchool.findPlumber(dataSchema, tuningConfig, metrics, ImmutableMap.of());
 
     final Supplier<Committer> committerSupplier = Committers.nilSupplier();
 
@@ -386,7 +387,6 @@ public class RealtimeIndexTask extends AbstractTask
     try {
       toolbox.getDataSegmentServerAnnouncer().announce();
       toolbox.getDruidNodeAnnouncer().announce(discoveryDruidNode);
-
 
       plumber.startJob();
 

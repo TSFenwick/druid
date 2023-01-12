@@ -77,6 +77,7 @@ import org.apache.druid.java.util.common.parsers.CloseableIterator;
 import org.apache.druid.segment.IndexMerger;
 import org.apache.druid.segment.IndexSpec;
 import org.apache.druid.segment.incremental.AppendableIndexSpec;
+import org.apache.druid.segment.incremental.EmittingParseExceptionHandler;
 import org.apache.druid.segment.incremental.ParseExceptionHandler;
 import org.apache.druid.segment.incremental.ParseExceptionReport;
 import org.apache.druid.segment.incremental.RowIngestionMeters;
@@ -468,17 +469,25 @@ public class IndexTask extends AbstractBatchIndexTask implements ChatHandler
       this.authorizerMapper = toolbox.getAuthorizerMapper();
       this.determinePartitionsMeters = toolbox.getRowIngestionMetersFactory().createRowIngestionMeters();
       this.buildSegmentsMeters = toolbox.getRowIngestionMetersFactory().createRowIngestionMeters();
-      this.determinePartitionsParseExceptionHandler = new ParseExceptionHandler(
+      this.determinePartitionsParseExceptionHandler = new EmittingParseExceptionHandler(
           determinePartitionsMeters,
           ingestionSchema.getTuningConfig().isLogParseExceptions(),
           ingestionSchema.getTuningConfig().getMaxParseExceptions(),
-          ingestionSchema.getTuningConfig().getMaxSavedParseExceptions()
+          ingestionSchema.getTuningConfig().getMaxSavedParseExceptions(),
+          toolbox.getEmitter(),
+          getId(),
+          getGroupId(),
+          getDataSource()
       );
-      this.buildSegmentsParseExceptionHandler = new ParseExceptionHandler(
+      this.buildSegmentsParseExceptionHandler = new EmittingParseExceptionHandler(
           buildSegmentsMeters,
           ingestionSchema.getTuningConfig().isLogParseExceptions(),
           ingestionSchema.getTuningConfig().getMaxParseExceptions(),
-          ingestionSchema.getTuningConfig().getMaxSavedParseExceptions()
+          ingestionSchema.getTuningConfig().getMaxSavedParseExceptions(),
+          toolbox.getEmitter(),
+          getId(),
+          getGroupId(),
+          getDataSource()
       );
 
       final boolean determineIntervals = ingestionSchema.getDataSchema()

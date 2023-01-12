@@ -25,6 +25,8 @@ import org.apache.druid.segment.indexing.DataSchema;
 import org.apache.druid.segment.indexing.RealtimeTuningConfig;
 import org.apache.druid.segment.realtime.FireDepartmentMetrics;
 
+import java.util.Map;
+
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
 @JsonSubTypes(value = {
     @JsonSubTypes.Type(name = "default", value = DefaultRealtimeAppenderatorFactory.class),
@@ -35,6 +37,7 @@ public interface AppenderatorFactory
   Appenderator build(
       DataSchema schema,
       RealtimeTuningConfig config,
-      FireDepartmentMetrics metrics
+      FireDepartmentMetrics metrics,
+      Map<String, Object> taskMetadata
   );
 }

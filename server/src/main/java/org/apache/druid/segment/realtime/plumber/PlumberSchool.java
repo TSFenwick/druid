@@ -25,6 +25,8 @@ import org.apache.druid.segment.indexing.DataSchema;
 import org.apache.druid.segment.indexing.RealtimeTuningConfig;
 import org.apache.druid.segment.realtime.FireDepartmentMetrics;
 
+import java.util.Map;
+
 /**
  */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type", defaultImpl = RealtimePlumberSchool.class)
@@ -39,6 +41,6 @@ public interface PlumberSchool
    *
    * @return returns a plumber
    */
-  Plumber findPlumber(DataSchema schema, RealtimeTuningConfig config, FireDepartmentMetrics metrics);
+  Plumber findPlumber(DataSchema schema, RealtimeTuningConfig config, FireDepartmentMetrics metrics, Map<String, Object> taskMetadata);
 
 }

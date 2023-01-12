@@ -45,6 +45,7 @@ import org.apache.druid.indexing.common.task.batch.parallel.distribution.StringS
 import org.apache.druid.indexing.common.task.batch.parallel.iterator.RangePartitionIndexTaskInputRowIteratorBuilder;
 import org.apache.druid.java.util.common.granularity.Granularity;
 import org.apache.druid.java.util.common.parsers.CloseableIterator;
+import org.apache.druid.segment.incremental.EmittingParseExceptionHandler;
 import org.apache.druid.segment.incremental.ParseExceptionHandler;
 import org.apache.druid.segment.incremental.RowIngestionMeters;
 import org.apache.druid.segment.indexing.DataSchema;
@@ -210,11 +211,15 @@ public class PartialDimensionDistributionTask extends PerfectRollupWorkerTask
                               ? ParallelIndexSupervisorTask.getInputFormat(ingestionSchema)
                               : null;
     final RowIngestionMeters buildSegmentsMeters = toolbox.getRowIngestionMetersFactory().createRowIngestionMeters();
-    final ParseExceptionHandler parseExceptionHandler = new ParseExceptionHandler(
+    final ParseExceptionHandler parseExceptionHandler = new EmittingParseExceptionHandler(
         buildSegmentsMeters,
         tuningConfig.isLogParseExceptions(),
         tuningConfig.getMaxParseExceptions(),
-        tuningConfig.getMaxSavedParseExceptions()
+        tuningConfig.getMaxSavedParseExceptions(),
+        toolbox.getEmitter(),
+        getGroupId(),
+        getId(),
+        getDataSource()
     );
     final boolean determineIntervals = granularitySpec.inputIntervals().isEmpty();
 
