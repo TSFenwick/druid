@@ -85,11 +85,13 @@ import org.apache.druid.msq.indexing.MSQWorkerTask;
 import org.apache.druid.msq.indexing.destination.MSQSelectDestination;
 import org.apache.druid.msq.indexing.error.CanceledFault;
 import org.apache.druid.msq.indexing.error.CannotParseExternalDataFault;
+import org.apache.druid.msq.indexing.error.MSQCompositeWarningPublisher;
 import org.apache.druid.msq.indexing.error.MSQErrorReport;
 import org.apache.druid.msq.indexing.error.MSQException;
 import org.apache.druid.msq.indexing.error.MSQFaultUtils;
+import org.apache.druid.msq.indexing.error.MSQFilteredEmitterWarningPublisher;
+import org.apache.druid.msq.indexing.error.MSQWarningPublisher;
 import org.apache.druid.msq.indexing.error.MSQWarningReportLimiterPublisher;
-import org.apache.druid.msq.indexing.error.MSQWarningReportPublisher;
 import org.apache.druid.msq.indexing.error.MSQWarningReportSimplePublisher;
 import org.apache.druid.msq.indexing.error.MSQWarnings;
 import org.apache.druid.msq.indexing.processor.KeyStatisticsCollectionProcessor;
@@ -237,6 +239,51 @@ public class WorkerImpl implements Worker
     this.intermediateSuperSorterLocalStorageTracker = new ByteTracker(maxBytes);
   }
 
+  /**
+   * Log (at DEBUG level) a string explaining the status of all work assigned to this worker.
+   */
+  private static void logKernelStatus(final Collection<WorkerStageKernel> kernels)
+  {
+    if (log.isDebugEnabled()) {
+      log.debug(
+          "Stages: %s",
+          kernels.stream()
+                 .sorted(Comparator.comparing(k -> k.getStageDefinition().getStageNumber()))
+                 .map(WorkerImpl::makeKernelStageStatusString)
+                 .collect(Collectors.joining("; "))
+      );
+    }
+  }
+
+  /**
+   * Helper used by {@link #logKernelStatus}.
+   */
+  private static String makeKernelStageStatusString(final WorkerStageKernel kernel)
+  {
+    final String inputPartitionNumbers =
+        StreamSupport.stream(InputSlices.allReadablePartitions(kernel.getWorkOrder().getInputs()).spliterator(), false)
+                     .map(ReadablePartition::getPartitionNumber)
+                     .sorted()
+                     .map(String::valueOf)
+                     .collect(Collectors.joining(","));
+
+    // String like ">50" if shuffling to 50 partitions, ">?" if shuffling to unknown number of partitions.
+    final String shuffleStatus =
+        kernel.getStageDefinition().doesShuffle()
+        ? ">" + (kernel.hasResultPartitionBoundaries() ? kernel.getResultPartitionBoundaries().size() : "?")
+        : "";
+
+    return StringUtils.format(
+        "S%d:W%d:P[%s]%s:%s:%s",
+        kernel.getStageDefinition().getStageNumber(),
+        kernel.getWorkOrder().getWorkerNumber(),
+        inputPartitionNumbers,
+        shuffleStatus,
+        kernel.getStageDefinition().doesShuffle() ? "SHUFFLE" : "RETAIN",
+        kernel.getPhase()
+    );
+  }
+
   @Override
   public String id()
   {
@@ -342,8 +389,16 @@ public class WorkerImpl implements Worker
     } else {
       criticalWarningCodes = ImmutableSet.of();
     }
-
-    final MSQWarningReportPublisher msqWarningReportPublisher = new MSQWarningReportLimiterPublisher(
+    final MSQWarningPublisher filteredEmitterWarningPublisher = new MSQFilteredEmitterWarningPublisher(
+        id(),
+        task.getControllerTaskId(),
+        id(),
+        MSQTasks.getHostFromSelfNode(selfDruidNode),
+        context.serviceEmitter(),
+        // todo make this be configurable.
+        ImmutableSet.of(CannotParseExternalDataFault.CODE)
+    );
+    final MSQWarningPublisher msqWarningReportLimiterPublisher = new MSQWarningReportLimiterPublisher(
         new MSQWarningReportSimplePublisher(
             id(),
             controllerClient,
@@ -358,7 +413,10 @@ public class WorkerImpl implements Worker
         MSQTasks.getHostFromSelfNode(selfDruidNode)
     );
 
-    closer.register(msqWarningReportPublisher);
+    final MSQWarningPublisher msqWarningPublisher = new MSQCompositeWarningPublisher(
+        ImmutableList.of(msqWarningReportLimiterPublisher, filteredEmitterWarningPublisher));
+
+    closer.register(msqWarningPublisher);
 
     final Map<StageId, SettableFuture<ClusterByPartitions>> partitionBoundariesFutureMap = new HashMap<>();
 
@@ -406,7 +464,7 @@ public class WorkerImpl implements Worker
               cancellationId,
               context.threadCount(),
               stageFrameContexts.get(stageDefinition.getId()),
-              msqWarningReportPublisher
+              msqWarningPublisher
           );
 
           runWorkOrder.start();
@@ -686,7 +744,6 @@ public class WorkerImpl implements Worker
 
   }
 
-
   @Override
   public CounterSnapshotsTree getCounters()
   {
@@ -909,49 +966,34 @@ public class WorkerImpl implements Worker
     }
   }
 
-  /**
-   * Log (at DEBUG level) a string explaining the status of all work assigned to this worker.
-   */
-  private static void logKernelStatus(final Collection<WorkerStageKernel> kernels)
+  private interface ExceptionalFunction<T, R>
   {
-    if (log.isDebugEnabled()) {
-      log.debug(
-          "Stages: %s",
-          kernels.stream()
-                 .sorted(Comparator.comparing(k -> k.getStageDefinition().getStageNumber()))
-                 .map(WorkerImpl::makeKernelStageStatusString)
-                 .collect(Collectors.joining("; "))
-      );
-    }
+    R apply(T t) throws Exception;
   }
 
-  /**
-   * Helper used by {@link #logKernelStatus}.
-   */
-  private static String makeKernelStageStatusString(final WorkerStageKernel kernel)
+  private static class ResultAndChannels<T>
   {
-    final String inputPartitionNumbers =
-        StreamSupport.stream(InputSlices.allReadablePartitions(kernel.getWorkOrder().getInputs()).spliterator(), false)
-                     .map(ReadablePartition::getPartitionNumber)
-                     .sorted()
-                     .map(String::valueOf)
-                     .collect(Collectors.joining(","));
+    private final ListenableFuture<T> resultFuture;
+    private final OutputChannels outputChannels;
 
-    // String like ">50" if shuffling to 50 partitions, ">?" if shuffling to unknown number of partitions.
-    final String shuffleStatus =
-        kernel.getStageDefinition().doesShuffle()
-        ? ">" + (kernel.hasResultPartitionBoundaries() ? kernel.getResultPartitionBoundaries().size() : "?")
-        : "";
+    public ResultAndChannels(
+        ListenableFuture<T> resultFuture,
+        OutputChannels outputChannels
+    )
+    {
+      this.resultFuture = resultFuture;
+      this.outputChannels = outputChannels;
+    }
 
-    return StringUtils.format(
-        "S%d:W%d:P[%s]%s:%s:%s",
-        kernel.getStageDefinition().getStageNumber(),
-        kernel.getWorkOrder().getWorkerNumber(),
-        inputPartitionNumbers,
-        shuffleStatus,
-        kernel.getStageDefinition().doesShuffle() ? "SHUFFLE" : "RETAIN",
-        kernel.getPhase()
-    );
+    public ListenableFuture<T> getResultFuture()
+    {
+      return resultFuture;
+    }
+
+    public OutputChannels getOutputChannels()
+    {
+      return outputChannels;
+    }
   }
 
   /**
@@ -1009,7 +1051,7 @@ public class WorkerImpl implements Worker
     private final String cancellationId;
     private final int parallelism;
     private final FrameContext frameContext;
-    private final MSQWarningReportPublisher warningPublisher;
+    private final MSQWarningPublisher warningPublisher;
 
     private InputSliceReader inputSliceReader;
     private OutputChannelFactory workOutputChannelFactory;
@@ -1026,7 +1068,7 @@ public class WorkerImpl implements Worker
         final String cancellationId,
         final int parallelism,
         final FrameContext frameContext,
-        final MSQWarningReportPublisher warningPublisher
+        final MSQWarningPublisher warningPublisher
     )
     {
       this.kernel = kernel;
@@ -1851,35 +1893,5 @@ public class WorkerImpl implements Worker
     {
       this.done = true;
     }
-  }
-
-  private static class ResultAndChannels<T>
-  {
-    private final ListenableFuture<T> resultFuture;
-    private final OutputChannels outputChannels;
-
-    public ResultAndChannels(
-        ListenableFuture<T> resultFuture,
-        OutputChannels outputChannels
-    )
-    {
-      this.resultFuture = resultFuture;
-      this.outputChannels = outputChannels;
-    }
-
-    public ListenableFuture<T> getResultFuture()
-    {
-      return resultFuture;
-    }
-
-    public OutputChannels getOutputChannels()
-    {
-      return outputChannels;
-    }
-  }
-
-  private interface ExceptionalFunction<T, R>
-  {
-    R apply(T t) throws Exception;
   }
 }

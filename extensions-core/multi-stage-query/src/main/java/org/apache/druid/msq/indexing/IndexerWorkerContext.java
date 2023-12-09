@@ -33,6 +33,7 @@ import org.apache.druid.indexing.common.TaskToolbox;
 import org.apache.druid.java.util.common.concurrent.Execs;
 import org.apache.druid.java.util.common.io.Closer;
 import org.apache.druid.java.util.common.logger.Logger;
+import org.apache.druid.java.util.emitter.service.ServiceEmitter;
 import org.apache.druid.msq.exec.ControllerClient;
 import org.apache.druid.msq.exec.LoadedSegmentDataProviderFactory;
 import org.apache.druid.msq.exec.TaskDataSegmentProvider;
@@ -272,6 +273,12 @@ public class IndexerWorkerContext implements WorkerContext
   public LoadedSegmentDataProviderFactory loadedSegmentDataProviderFactory()
   {
     return loadedSegmentDataProviderFactory;
+  }
+
+  @Override
+  public ServiceEmitter serviceEmitter()
+  {
+    return toolbox.getEmitter();
   }
 
   private synchronized OverlordClient makeOverlordClient()

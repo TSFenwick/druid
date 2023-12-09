@@ -31,13 +31,13 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Limits the number of exceptions that get published to the underlying delegate publisher. This helps
  * in preventing the spam of exceptions from the worker task to the published source. As such, any implementation
- * of {@link MSQWarningReportPublisher} that is wrapped in this class cannot be sure that the warning handed off
+ * of {@link MSQWarningPublisher} that is wrapped in this class cannot be sure that the warning handed off
  * is trully published
  */
-public class MSQWarningReportLimiterPublisher implements MSQWarningReportPublisher
+public class MSQWarningReportLimiterPublisher implements MSQWarningPublisher
 {
 
-  private final MSQWarningReportPublisher delegate;
+  private final MSQWarningPublisher delegate;
   private final long totalLimit;
   private final Map<String, Long> errorCodeToLimit;
   private final Set<String> criticalWarningCodes;
@@ -68,7 +68,7 @@ public class MSQWarningReportLimiterPublisher implements MSQWarningReportPublish
    * @param host worker' host, used to construct the error report
    */
   public MSQWarningReportLimiterPublisher(
-      MSQWarningReportPublisher delegate,
+      MSQWarningPublisher delegate,
       long totalLimit,
       Map<String, Long> errorCodeToLimit,
       Set<String> criticalWarningCodes,

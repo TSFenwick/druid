@@ -24,6 +24,7 @@ import com.google.inject.Injector;
 import org.apache.druid.frame.processor.Bouncer;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.java.util.common.io.Closer;
+import org.apache.druid.java.util.emitter.service.ServiceEmitter;
 import org.apache.druid.msq.kernel.FrameContext;
 import org.apache.druid.msq.kernel.QueryDefinition;
 import org.apache.druid.server.DruidNode;
@@ -80,4 +81,6 @@ public interface WorkerContext
   {
     return new File(StringUtils.format("%s/stage_%02d/%s", tempDir(), stageNumber, id));
   }
+
+  ServiceEmitter serviceEmitter();
 }
