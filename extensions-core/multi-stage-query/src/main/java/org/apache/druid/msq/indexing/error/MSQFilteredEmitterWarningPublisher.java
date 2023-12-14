@@ -42,10 +42,6 @@ public class MSQFilteredEmitterWarningPublisher implements MSQWarningPublisher
       MSQErrorReport errorReport = MSQErrorReport.fromException(workerId, host, stageNumber, e);
       String errorMessage = errorReport.getFault().getErrorMessage();
       ServiceLogEvent.Builder serviceLogEvent = new ServiceLogEvent.Builder();
-      errorReport.getFault();
-      errorReport.getHost();
-      errorReport.getStageNumber();
-      errorReport.getTaskId();
       serviceLogEvent.setData(ImmutableMap.<String, Object>builder()
                                           .put("message", errorMessage)
                                           .put("host", errorReport.getHost())
