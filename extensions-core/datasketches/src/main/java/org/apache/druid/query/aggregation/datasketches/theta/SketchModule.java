@@ -47,6 +47,7 @@ public class SketchModule implements DruidModule
 
   public static final String THETA_SKETCH_MERGE_AGG = "thetaSketchMerge";
   public static final String THETA_SKETCH_BUILD_AGG = "thetaSketchBuild";
+  public static final ColumnType THETA_SKETCH_TYPE = ColumnType.ofComplex(THETA_SKETCH);
   public static final ColumnType BUILD_TYPE = ColumnType.ofComplex(THETA_SKETCH_BUILD_AGG);
   public static final ColumnType MERGE_TYPE = ColumnType.ofComplex(THETA_SKETCH_MERGE_AGG);
 
@@ -74,6 +75,7 @@ public class SketchModule implements DruidModule
         ThetaSketchApproxCountDistinctSqlAggregator.class
     );
     ExpressionModule.addExprMacro(binder, ThetaPostAggMacros.ThetaSketchEstimateExprMacro.class);
+    ExpressionModule.addExprMacro(binder, ThetaPostAggMacros.ThetaSketchEstimateWithErrorBoundsExprMacro.class);
   }
 
   @Override

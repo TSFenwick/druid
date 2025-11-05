@@ -84,7 +84,8 @@ public class HashPartitionMultiPhaseParallelIndexingTest extends AbstractMultiPh
       null,
       false,
       false,
-      0
+      0,
+      null
   );
   private static final Interval INTERVAL_TO_INDEX = Intervals.of("2017-12/P1M");
   private static final String INPUT_FILTER = "test_*";
@@ -95,15 +96,15 @@ public class HashPartitionMultiPhaseParallelIndexingTest extends AbstractMultiPh
   public static Iterable<Object[]> constructorFeeder()
   {
     return ImmutableList.of(
-        new Object[]{LockGranularity.TIME_CHUNK, false, 2, INTERVAL_TO_INDEX, 2},
-        new Object[]{LockGranularity.TIME_CHUNK, true, 2, INTERVAL_TO_INDEX, 2},
-        new Object[]{LockGranularity.TIME_CHUNK, true, 2, null, 2},
+        new Object[]{LockGranularity.TIME_CHUNK, false, 10, INTERVAL_TO_INDEX, 2},
+        new Object[]{LockGranularity.TIME_CHUNK, true, 10, INTERVAL_TO_INDEX, 2},
+        new Object[]{LockGranularity.TIME_CHUNK, true, 10, null, 2},
         new Object[]{LockGranularity.TIME_CHUNK, true, 1, INTERVAL_TO_INDEX, 2},
-        new Object[]{LockGranularity.SEGMENT, true, 2, INTERVAL_TO_INDEX, 2},
-        new Object[]{LockGranularity.TIME_CHUNK, true, 2, INTERVAL_TO_INDEX, null},
-        new Object[]{LockGranularity.TIME_CHUNK, true, 2, null, null},
+        new Object[]{LockGranularity.SEGMENT, true, 10, INTERVAL_TO_INDEX, 2},
+        new Object[]{LockGranularity.TIME_CHUNK, true, 10, INTERVAL_TO_INDEX, null},
+        new Object[]{LockGranularity.TIME_CHUNK, true, 10, null, null},
         new Object[]{LockGranularity.TIME_CHUNK, true, 1, INTERVAL_TO_INDEX, null},
-        new Object[]{LockGranularity.SEGMENT, true, 2, INTERVAL_TO_INDEX, null}
+        new Object[]{LockGranularity.SEGMENT, true, 10, INTERVAL_TO_INDEX, null}
     );
   }
 
@@ -178,7 +179,7 @@ public class HashPartitionMultiPhaseParallelIndexingTest extends AbstractMultiPh
         inputDir,
         false,
         false
-    ), TaskState.SUCCESS);
+    ), TaskState.SUCCESS).getSegments();
 
     final Map<Interval, Integer> expectedIntervalToNumSegments = computeExpectedIntervalToNumSegments(
         maxRowsPerSegment,
@@ -200,7 +201,7 @@ public class HashPartitionMultiPhaseParallelIndexingTest extends AbstractMultiPh
         newInputDirForReplace(),
         false,
         true
-    ), TaskState.SUCCESS);
+    ), TaskState.SUCCESS).getSegments();
 
     final Map<Interval, Integer> expectedIntervalToNumSegmentsAfterReplace = computeExpectedIntervalToNumSegments(
         maxRowsPerSegment,
@@ -242,7 +243,7 @@ public class HashPartitionMultiPhaseParallelIndexingTest extends AbstractMultiPh
             HashPartitionFunction.MURMUR3_32_ABS
         ),
         inputDir, false, false
-    ), TaskState.SUCCESS);
+    ), TaskState.SUCCESS).getSegments();
     final Map<Interval, Integer> expectedIntervalToNumSegments = computeExpectedIntervalToNumSegments(
         maxRowsPerSegment,
         numShards
@@ -280,7 +281,7 @@ public class HashPartitionMultiPhaseParallelIndexingTest extends AbstractMultiPh
                 new HashedPartitionsSpec(null, numShards, ImmutableList.of("dim1", "dim2")),
                 inputDir, false, false
             ),
-            TaskState.SUCCESS)
+            TaskState.SUCCESS).getSegments()
     );
     // Append
     publishedSegments.addAll(
@@ -289,7 +290,7 @@ public class HashPartitionMultiPhaseParallelIndexingTest extends AbstractMultiPh
                 new DynamicPartitionsSpec(5, null),
                 inputDir, true, false
             ),
-            TaskState.SUCCESS));
+            TaskState.SUCCESS).getSegments());
     // And append again
     publishedSegments.addAll(
         runTask(
@@ -297,7 +298,7 @@ public class HashPartitionMultiPhaseParallelIndexingTest extends AbstractMultiPh
                 new DynamicPartitionsSpec(10, null),
                 inputDir, true, false
             ),
-            TaskState.SUCCESS)
+            TaskState.SUCCESS).getSegments()
     );
 
     final Map<Interval, List<DataSegment>> intervalToSegments = new HashMap<>();

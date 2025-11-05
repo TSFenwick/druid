@@ -28,9 +28,10 @@ import org.apache.druid.server.security.ResourceAction;
 import org.apache.druid.server.security.ResourceType;
 import org.apache.druid.sql.calcite.planner.PlannerConfig;
 import org.apache.druid.sql.calcite.util.CalciteTests;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -227,6 +228,9 @@ public class DruidPlannerResourceAnalyzeTest extends BaseCalciteQueryTest
       context.forEach((k, v) -> expectedResources.add(
           new ResourceAction(new Resource(k, ResourceType.QUERY_CONTEXT), Action.WRITE)
       ));
+      expectedResources.add(new ResourceAction(new Resource("sqlCurrentTimestamp", ResourceType.QUERY_CONTEXT), Action.WRITE));
+      expectedResources.add(new ResourceAction(new Resource("maxScatterGatherBytes", ResourceType.QUERY_CONTEXT), Action.WRITE));
+      expectedResources.add(new ResourceAction(new Resource("defaultTimeout", ResourceType.QUERY_CONTEXT), Action.WRITE));
     }
     analyzeResources(
         plannerConfig,
@@ -286,9 +290,33 @@ public class DruidPlannerResourceAnalyzeTest extends BaseCalciteQueryTest
         context,
         CalciteTests.REGULAR_USER_AUTH_RESULT,
         ImmutableList.of(
+            new ResourceAction(new Resource("sqlCurrentTimestamp", ResourceType.QUERY_CONTEXT), Action.WRITE),
+            new ResourceAction(new Resource("maxScatterGatherBytes", ResourceType.QUERY_CONTEXT), Action.WRITE),
+            new ResourceAction(new Resource("defaultTimeout", ResourceType.QUERY_CONTEXT), Action.WRITE),
             new ResourceAction(new Resource("foo", ResourceType.DATASOURCE), Action.READ),
             new ResourceAction(new Resource("baz", ResourceType.QUERY_CONTEXT), Action.WRITE),
             new ResourceAction(new Resource("nested-bar", ResourceType.QUERY_CONTEXT), Action.WRITE)
+        )
+    );
+  }
+
+  @Test
+  public void testQueryContextSetStatement()
+  {
+    final String sql = "SET baz = 'fo'; SELECT COUNT(*) FROM foo WHERE foo.dim1 <> 'z'";
+    analyzeResources(
+        PLANNER_CONFIG_DEFAULT,
+        AuthConfig.newBuilder().setAuthorizeQueryContextParams(true).build(),
+        sql,
+        Collections.emptyMap(),
+        CalciteTests.REGULAR_USER_AUTH_RESULT,
+        ImmutableList.of(
+            new ResourceAction(new Resource("sqlCurrentTimestamp", ResourceType.QUERY_CONTEXT), Action.WRITE),
+            new ResourceAction(new Resource("maxScatterGatherBytes", ResourceType.QUERY_CONTEXT), Action.WRITE),
+            new ResourceAction(new Resource("defaultTimeout", ResourceType.QUERY_CONTEXT), Action.WRITE),
+            new ResourceAction(new Resource("foo", ResourceType.DATASOURCE), Action.READ),
+            new ResourceAction(new Resource("baz", ResourceType.QUERY_CONTEXT), Action.WRITE)
+
         )
     );
   }

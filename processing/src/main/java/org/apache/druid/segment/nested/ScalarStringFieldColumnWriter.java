@@ -19,9 +19,7 @@
 
 package org.apache.druid.segment.nested;
 
-import org.apache.druid.common.config.NullHandling;
-import org.apache.druid.java.util.common.io.smoosh.FileSmoosher;
-import org.apache.druid.segment.IndexSpec;
+import org.apache.druid.segment.file.SegmentFileBuilder;
 import org.apache.druid.segment.writeout.SegmentWriteOutMedium;
 
 import java.io.IOException;
@@ -36,11 +34,11 @@ public final class ScalarStringFieldColumnWriter extends GlobalDictionaryEncoded
       String columnName,
       String fieldName,
       SegmentWriteOutMedium segmentWriteOutMedium,
-      IndexSpec indexSpec,
+      NestedCommonFormatColumnFormatSpec columnFormatSpec,
       DictionaryIdLookup globalDictionaryIdLookup
   )
   {
-    super(columnName, fieldName, segmentWriteOutMedium, indexSpec, globalDictionaryIdLookup);
+    super(columnName, fieldName, segmentWriteOutMedium, columnFormatSpec, globalDictionaryIdLookup);
   }
 
   @Override
@@ -49,7 +47,7 @@ public final class ScalarStringFieldColumnWriter extends GlobalDictionaryEncoded
     if (value == null) {
       return null;
     }
-    return NullHandling.emptyToNullIfNeeded(String.valueOf(value));
+    return String.valueOf(value);
   }
 
   @Override
@@ -59,9 +57,9 @@ public final class ScalarStringFieldColumnWriter extends GlobalDictionaryEncoded
   }
 
   @Override
-  void writeColumnTo(WritableByteChannel channel, FileSmoosher smoosher) throws IOException
+  void writeColumnTo(WritableByteChannel channel, SegmentFileBuilder fileBuilder) throws IOException
   {
     writeLongAndDoubleColumnLength(channel, 0, 0);
-    encodedValueSerializer.writeTo(channel, smoosher);
+    encodedValueSerializer.writeTo(channel, fileBuilder);
   }
 }

@@ -32,6 +32,7 @@ import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.query.DataSource;
+import org.apache.druid.query.RestrictedDataSource;
 import org.apache.druid.query.TableDataSource;
 import org.apache.druid.query.UnionDataSource;
 import org.apache.druid.segment.column.RowSignature;
@@ -54,8 +55,7 @@ import java.util.stream.Collectors;
  */
 public class DruidUnionDataSourceRel extends DruidRel<DruidUnionDataSourceRel>
 {
-  private static final TableDataSource DUMMY_DATA_SOURCE = new TableDataSource("__union__");
-
+  static final TableDataSource DUMMY_DATA_SOURCE = new TableDataSource("__union__");
   private final Union unionRel;
   private final List<String> unionColumnNames;
   private final PartialDruidQuery partialQuery;
@@ -107,7 +107,7 @@ public class DruidUnionDataSourceRel extends DruidRel<DruidUnionDataSourceRel>
   {
     return new DruidUnionDataSourceRel(
         getCluster(),
-        newQueryBuilder.getTraitSet(getConvention()),
+        newQueryBuilder.getTraitSet(getConvention(), getPlannerContext()),
         unionRel,
         unionColumnNames,
         newQueryBuilder,
@@ -131,7 +131,7 @@ public class DruidUnionDataSourceRel extends DruidRel<DruidUnionDataSourceRel>
 
       final DruidQuery query = druidRel.toDruidQuery(false);
       final DataSource dataSource = query.getDataSource();
-      if (!(dataSource instanceof TableDataSource)) {
+      if (!(dataSource instanceof TableDataSource) && !(dataSource instanceof RestrictedDataSource)) {
         getPlannerContext().setPlanningError("SQL requires union with input of '%s' type that is not supported."
                 + " Union operation is only supported between regular tables. ",
             dataSource.getClass().getSimpleName());
@@ -143,7 +143,7 @@ public class DruidUnionDataSourceRel extends DruidRel<DruidUnionDataSourceRel>
       }
 
       if (signature.getColumnNames().equals(query.getOutputRowSignature().getColumnNames())) {
-        dataSources.add((TableDataSource) dataSource);
+        dataSources.add(dataSource);
       } else {
         getPlannerContext().setPlanningError("There is a mismatch between the output row signature of input tables and the row signature of union output.");
         throw new CannotBuildQueryException(druidRel);
@@ -166,7 +166,8 @@ public class DruidUnionDataSourceRel extends DruidRel<DruidUnionDataSourceRel>
         signature,
         getPlannerContext(),
         getCluster().getRexBuilder(),
-        finalizeAggregations
+        finalizeAggregations,
+        true
     );
   }
 
@@ -181,6 +182,7 @@ public class DruidUnionDataSourceRel extends DruidRel<DruidUnionDataSourceRel>
         ),
         getPlannerContext(),
         getCluster().getRexBuilder(),
+        false,
         false
     );
   }

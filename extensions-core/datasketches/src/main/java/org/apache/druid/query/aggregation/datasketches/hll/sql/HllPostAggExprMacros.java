@@ -24,23 +24,23 @@ import org.apache.druid.math.expr.ExprEval;
 import org.apache.druid.math.expr.ExprMacroTable;
 import org.apache.druid.math.expr.ExpressionType;
 import org.apache.druid.query.aggregation.datasketches.hll.HllSketchHolder;
+import org.apache.druid.query.aggregation.datasketches.hll.HllSketchToEstimateWithBoundsPostAggregator;
 
 import javax.annotation.Nullable;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class HllPostAggExprMacros
 {
   public static final String HLL_SKETCH_ESTIMATE = "hll_sketch_estimate";
+  public static final String HLL_SKETCH_ESTIMATE_WITH_ERROR_BOUNDS = "hll_sketch_estimate_with_error_bounds";
 
   public static class HLLSketchEstimateExprMacro implements ExprMacroTable.ExprMacro
   {
-
     @Override
     public Expr apply(List<Expr> args)
     {
       validationHelperCheckAnyOfArgumentCount(args, 1, 2);
-      return new HllSketchEstimateExpr(args);
+      return new HllSketchEstimateExpr(this, args);
     }
 
     @Override
@@ -50,14 +50,30 @@ public class HllPostAggExprMacros
     }
   }
 
+  public static class HllSketchEstimateWithErrorBoundsExprMacro implements ExprMacroTable.ExprMacro
+  {
+    @Override
+    public Expr apply(List<Expr> args)
+    {
+      validationHelperCheckAnyOfArgumentCount(args, 1, 2);
+      return new HllSketchEstimateWithErrorBoundsExpr(this, args);
+    }
+
+    @Override
+    public String name()
+    {
+      return HLL_SKETCH_ESTIMATE_WITH_ERROR_BOUNDS;
+    }
+  }
+
   public static class HllSketchEstimateExpr extends ExprMacroTable.BaseScalarMacroFunctionExpr
   {
     private Expr estimateExpr;
     private Expr isRound;
 
-    public HllSketchEstimateExpr(List<Expr> args)
+    public HllSketchEstimateExpr(HLLSketchEstimateExprMacro macro, List<Expr> args)
     {
-      super(HLL_SKETCH_ESTIMATE, args);
+      super(macro, args);
       this.estimateExpr = args.get(0);
       if (args.size() == 2) {
         isRound = args.get(1);
@@ -88,12 +104,44 @@ public class HllPostAggExprMacros
       double estimate = h.getEstimate();
       return round ? ExprEval.of(Math.round(estimate)) : ExprEval.of(estimate);
     }
+  }
+
+  public static class HllSketchEstimateWithErrorBoundsExpr extends ExprMacroTable.BaseScalarMacroFunctionExpr
+  {
+    private Expr estimateExpr;
+    private Expr numStdDev;
+
+    public HllSketchEstimateWithErrorBoundsExpr(HllSketchEstimateWithErrorBoundsExprMacro macro, List<Expr> args)
+    {
+      super(macro, args);
+      this.estimateExpr = args.get(0);
+      if (args.size() == 2) {
+        numStdDev = args.get(1);
+      }
+    }
+
+    @Nullable
+    @Override
+    public ExpressionType getOutputType(InputBindingInspector inspector)
+    {
+      return ExpressionType.DOUBLE_ARRAY;
+    }
 
     @Override
-    public Expr visit(Shuttle shuttle)
+    public ExprEval eval(ObjectBinding bindings)
     {
-      List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-      return shuttle.visit(new HllSketchEstimateExpr(newArgs));
+      int numStdDevs = HllSketchToEstimateWithBoundsPostAggregator.DEFAULT_NUM_STD_DEVS;
+      ExprEval eval = estimateExpr.eval(bindings);
+      if (numStdDev != null) {
+        numStdDevs = numStdDev.eval(bindings).asInt();
+      }
+
+      final Object valObj = eval.value();
+      if (valObj == null) {
+        return ExprEval.ofDoubleArray(new Double[]{0.0D, 0.0D, 0.0D});
+      }
+      HllSketchHolder sketch = HllSketchHolder.fromObj(valObj);
+      return ExprEval.ofDoubleArray(new Double[]{sketch.getEstimate(), sketch.getLowerBound(numStdDevs), sketch.getUpperBound(numStdDevs)});
     }
   }
 }

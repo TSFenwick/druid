@@ -22,14 +22,11 @@ package org.apache.druid.server.coordinator.loading;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Sets;
 import com.google.errorprone.annotations.concurrent.GuardedBy;
-import com.google.inject.Provider;
-import org.apache.curator.framework.CuratorFramework;
-import org.apache.curator.utils.ZKPaths;
 import org.apache.druid.client.ImmutableDruidServer;
 import org.apache.druid.java.util.common.logger.Logger;
 import org.apache.druid.java.util.http.client.HttpClient;
-import org.apache.druid.server.coordinator.DruidCoordinatorConfig;
-import org.apache.druid.server.initialization.ZkPathsConfig;
+import org.apache.druid.server.coordinator.CoordinatorDynamicConfig;
+import org.apache.druid.server.coordinator.config.HttpLoadQueuePeonConfig;
 
 import java.util.List;
 import java.util.Map;
@@ -38,6 +35,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 /**
  * Provides LoadQueuePeons
@@ -46,14 +44,12 @@ public class LoadQueueTaskMaster
 {
   private static final Logger log = new Logger(LoadQueueTaskMaster.class);
 
-  private final Provider<CuratorFramework> curatorFrameworkProvider;
   private final ObjectMapper jsonMapper;
   private final ScheduledExecutorService peonExec;
   private final ExecutorService callbackExec;
-  private final DruidCoordinatorConfig config;
+  private final HttpLoadQueuePeonConfig config;
   private final HttpClient httpClient;
-  private final ZkPathsConfig zkPaths;
-  private final boolean httpLoading;
+  private final Supplier<CoordinatorDynamicConfig> coordinatorDynamicConfigSupplier;
 
   @GuardedBy("this")
   private final AtomicBoolean isLeader = new AtomicBoolean(false);
@@ -61,39 +57,33 @@ public class LoadQueueTaskMaster
   private final ConcurrentHashMap<String, LoadQueuePeon> loadManagementPeons = new ConcurrentHashMap<>();
 
   public LoadQueueTaskMaster(
-      Provider<CuratorFramework> curatorFrameworkProvider,
       ObjectMapper jsonMapper,
       ScheduledExecutorService peonExec,
       ExecutorService callbackExec,
-      DruidCoordinatorConfig config,
+      HttpLoadQueuePeonConfig config,
       HttpClient httpClient,
-      ZkPathsConfig zkPaths
+      Supplier<CoordinatorDynamicConfig> coordinatorDynamicConfigSupplier
   )
   {
-    this.curatorFrameworkProvider = curatorFrameworkProvider;
     this.jsonMapper = jsonMapper;
     this.peonExec = peonExec;
     this.callbackExec = callbackExec;
     this.config = config;
     this.httpClient = httpClient;
-    this.zkPaths = zkPaths;
-    this.httpLoading = "http".equalsIgnoreCase(config.getLoadQueuePeonType());
+    this.coordinatorDynamicConfigSupplier = coordinatorDynamicConfigSupplier;
   }
 
   private LoadQueuePeon createPeon(ImmutableDruidServer server)
   {
-    if (httpLoading) {
-      return new HttpLoadQueuePeon(server.getURL(), jsonMapper, httpClient, config, peonExec, callbackExec);
-    } else {
-      return new CuratorLoadQueuePeon(
-          curatorFrameworkProvider.get(),
-          ZKPaths.makePath(zkPaths.getLoadQueuePath(), server.getName()),
-          jsonMapper,
-          peonExec,
-          callbackExec,
-          config
-      );
-    }
+    return new HttpLoadQueuePeon(
+        server.getURL(),
+        jsonMapper,
+        httpClient,
+        config,
+        () -> coordinatorDynamicConfigSupplier.get().getLoadingModeForServer(server.getName()),
+        peonExec,
+        callbackExec
+    );
   }
 
   public Map<String, LoadQueuePeon> getAllPeons()
@@ -155,12 +145,13 @@ public class LoadQueueTaskMaster
   {
     isLeader.set(false);
 
+    log.info("Stopping load queue peon for [%d] servers.", loadManagementPeons.size());
     loadManagementPeons.values().forEach(LoadQueuePeon::stop);
     loadManagementPeons.clear();
   }
 
   public boolean isHttpLoading()
   {
-    return httpLoading;
+    return true;
   }
 }

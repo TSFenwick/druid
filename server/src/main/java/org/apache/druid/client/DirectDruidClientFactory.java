@@ -21,50 +21,67 @@ package org.apache.druid.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.inject.Inject;
+import org.apache.druid.guice.LazySingleton;
 import org.apache.druid.guice.annotations.EscalatedClient;
 import org.apache.druid.guice.annotations.Smile;
+import org.apache.druid.java.util.common.concurrent.ScheduledExecutors;
 import org.apache.druid.java.util.emitter.service.ServiceEmitter;
 import org.apache.druid.java.util.http.client.HttpClient;
-import org.apache.druid.query.QueryToolChestWarehouse;
+import org.apache.druid.query.QueryRunnerFactoryConglomerate;
 import org.apache.druid.query.QueryWatcher;
+import org.apache.druid.utils.JvmUtils;
+
+import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * Factory for building {@link DirectDruidClient}
  */
-public class DirectDruidClientFactory
+@LazySingleton
+public class DirectDruidClientFactory implements QueryableDruidServer.Maker
 {
   private final ServiceEmitter emitter;
-  private final QueryToolChestWarehouse warehouse;
+  private final QueryRunnerFactoryConglomerate conglomerate;
   private final QueryWatcher queryWatcher;
   private final ObjectMapper smileMapper;
   private final HttpClient httpClient;
+  private final ScheduledExecutorService queryCancellationExecutor;
 
   @Inject
   public DirectDruidClientFactory(
       final ServiceEmitter emitter,
-      final QueryToolChestWarehouse warehouse,
+      final QueryRunnerFactoryConglomerate conglomerate,
       final QueryWatcher queryWatcher,
       final @Smile ObjectMapper smileMapper,
       final @EscalatedClient HttpClient httpClient
   )
   {
     this.emitter = emitter;
-    this.warehouse = warehouse;
+    this.conglomerate = conglomerate;
     this.queryWatcher = queryWatcher;
     this.smileMapper = smileMapper;
     this.httpClient = httpClient;
+
+    int threadCount = Math.max(1, JvmUtils.getRuntimeInfo().getAvailableProcessors() / 2);
+    this.queryCancellationExecutor = ScheduledExecutors.fixed(threadCount, "query-cancellation-executor");
   }
 
   public DirectDruidClient makeDirectClient(DruidServer server)
   {
     return new DirectDruidClient(
-        warehouse,
+        conglomerate,
         queryWatcher,
         smileMapper,
         httpClient,
         server.getScheme(),
         server.getHost(),
-        emitter
+        emitter,
+        queryCancellationExecutor
     );
+  }
+
+  @Override
+  public QueryableDruidServer make(DruidServer server)
+  {
+    return new QueryableDruidServer(server, makeDirectClient(server));
   }
 }

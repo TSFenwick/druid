@@ -16,24 +16,28 @@
  * limitations under the License.
  */
 
-import { AnchorButton, Button, Intent, Menu, MenuItem, Position } from '@blueprintjs/core';
+import {
+  AnchorButton,
+  Button,
+  ControlGroup,
+  InputGroup,
+  Intent,
+  Label,
+  Menu,
+  MenuItem,
+  Popover,
+  Position,
+} from '@blueprintjs/core';
 import { IconNames } from '@blueprintjs/icons';
-import { Popover2 } from '@blueprintjs/popover2';
 import React, { useState } from 'react';
 import ReactTable from 'react-table';
 
 import type { Execution } from '../../../druid-models';
 import { SMALL_TABLE_PAGE_SIZE } from '../../../react-table';
 import { Api, UrlBaser } from '../../../singletons';
-import {
-  clamp,
-  downloadUrl,
-  formatBytes,
-  formatInteger,
-  pluralIfNeeded,
-  tickIcon,
-  wait,
-} from '../../../utils';
+import { clamp, formatBytes, formatInteger, pluralIfNeeded, tickIcon } from '../../../utils';
+
+import './destination-pages-pane.scss';
 
 type ResultFormat = 'object' | 'array' | 'objectLines' | 'arrayLines' | 'csv';
 
@@ -54,7 +58,7 @@ function resultFormatToExtension(resultFormat: ResultFormat): string {
   }
 }
 
-const RESULT_FORMAT_LABEL: Record<ResultFormat, string> = {
+const RESULT_FORMAT_DESCRIPTION: Record<ResultFormat, string> = {
   object: 'Array of objects',
   array: 'Array of arrays',
   objectLines: 'JSON Lines',
@@ -70,83 +74,93 @@ export const DestinationPagesPane = React.memo(function DestinationPagesPane(
   props: DestinationPagesPaneProps,
 ) {
   const { execution } = props;
+  const [prefix, setPrefix] = useState(execution.id);
   const [desiredResultFormat, setDesiredResultFormat] = useState<ResultFormat>('objectLines');
   const desiredExtension = resultFormatToExtension(desiredResultFormat);
 
   const destination = execution.destination;
   const pages = execution.destinationPages;
   if (!pages) return null;
-  const id = Api.encodePath(execution.id);
+  const numPages = pages.length;
 
   const numTotalRows = destination?.numTotalRows;
 
-  function getPageUrl(pageIndex: number) {
+  function getResultUrl(pageIndex: number) {
     return UrlBaser.base(
-      `/druid/v2/sql/statements/${id}/results?page=${pageIndex}&resultFormat=${desiredResultFormat}`,
+      `/druid/v2/sql/statements/${Api.encodePath(execution.id)}/results?${
+        pageIndex < 0 ? '' : `page=${pageIndex}&`
+      }resultFormat=${desiredResultFormat}&filename=${getPageFilename(pageIndex)}`,
     );
   }
 
-  function getPageFilename(pageIndex: number) {
-    return `${id}_page${pageIndex}.${desiredExtension}`;
+  function getFilenamePageInfo(pageIndex: number) {
+    if (pageIndex < 0) return '';
+    const numPagesString = String(numPages);
+    const pageNumberString = String(pageIndex + 1).padStart(numPagesString.length, '0');
+    return `.page_${pageNumberString}_of_${numPagesString}`;
   }
 
-  async function downloadAllPages() {
-    if (!pages) return;
-    for (let i = 0; i < pages.length; i++) {
-      downloadUrl(getPageUrl(i), getPageFilename(i));
-      await wait(100);
-    }
+  function getPageFilename(pageIndex: number) {
+    return `${prefix}${getFilenamePageInfo(pageIndex)}.${desiredExtension}`;
   }
 
   return (
-    <div className="execution-details-pane">
+    <div className="destination-pages-pane">
       <p>
         {`${
           typeof numTotalRows === 'number' ? pluralIfNeeded(numTotalRows, 'row') : 'Results'
-        } have been written to ${pluralIfNeeded(pages.length, 'page')}. `}
+        } have been written to ${pluralIfNeeded(numPages, 'page')}. `}
       </p>
       <p>
-        Format when downloading:{' '}
-        <Popover2
-          minimal
-          position={Position.BOTTOM_LEFT}
-          content={
-            <Menu>
-              {RESULT_FORMATS.map((resultFormat, i) => (
-                <MenuItem
-                  key={i}
-                  icon={tickIcon(desiredResultFormat === resultFormat)}
-                  text={RESULT_FORMAT_LABEL[resultFormat]}
-                  label={resultFormat}
-                  onClick={() => setDesiredResultFormat(resultFormat)}
-                />
-              ))}
-            </Menu>
-          }
-        >
-          <Button
-            text={RESULT_FORMAT_LABEL[desiredResultFormat]}
-            rightIcon={IconNames.CARET_DOWN}
+        <Label>Download as</Label>
+        <ControlGroup className="download-as-controls">
+          <InputGroup
+            value={prefix}
+            onChange={(e: any) => setPrefix(e.target.value.slice(0, 200))}
+            placeholder="file_prefix"
+            rightElement={<Button disabled text={`.${desiredExtension}`} />}
+            fill
           />
-        </Popover2>{' '}
-        {pages.length > 1 && (
-          <Button
-            intent={Intent.PRIMARY}
-            icon={IconNames.DOWNLOAD}
-            text={`Download all data (${pluralIfNeeded(pages.length, 'file')})`}
-            onClick={() => void downloadAllPages()}
-          />
-        )}
+          <Popover
+            minimal
+            position={Position.BOTTOM_LEFT}
+            content={
+              <Menu>
+                {RESULT_FORMATS.map((resultFormat, i) => (
+                  <MenuItem
+                    key={i}
+                    icon={tickIcon(desiredResultFormat === resultFormat)}
+                    text={RESULT_FORMAT_DESCRIPTION[resultFormat]}
+                    label={resultFormat}
+                    onClick={() => setDesiredResultFormat(resultFormat)}
+                  />
+                ))}
+              </Menu>
+            }
+          >
+            <Button
+              text={RESULT_FORMAT_DESCRIPTION[desiredResultFormat]}
+              rightIcon={IconNames.CARET_DOWN}
+            />
+          </Popover>
+        </ControlGroup>
+        <AnchorButton
+          intent={Intent.PRIMARY}
+          icon={IconNames.DOWNLOAD}
+          text="Download all data (concatenated)"
+          href={getResultUrl(-1)}
+          download
+        />
       </p>
       <ReactTable
         data={pages}
         loading={false}
         sortable={false}
-        defaultPageSize={clamp(pages.length, 1, SMALL_TABLE_PAGE_SIZE)}
-        showPagination={pages.length > SMALL_TABLE_PAGE_SIZE}
+        defaultPageSize={clamp(numPages, 1, SMALL_TABLE_PAGE_SIZE)}
+        showPagination={numPages > SMALL_TABLE_PAGE_SIZE}
         columns={[
           {
-            Header: 'Page number',
+            Header: 'Page ID',
             id: 'id',
             accessor: 'id',
             className: 'padded',
@@ -172,14 +186,15 @@ export const DestinationPagesPane = React.memo(function DestinationPagesPane(
             Header: '',
             id: 'download',
             accessor: 'id',
-            width: 300,
+            width: 130,
             Cell: ({ value }) => (
               <AnchorButton
+                className="download-button"
                 icon={IconNames.DOWNLOAD}
                 text="Download"
                 minimal
-                href={getPageUrl(value)}
-                download={getPageFilename(value)}
+                href={getResultUrl(value)}
+                download
               />
             ),
           },

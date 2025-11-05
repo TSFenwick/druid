@@ -54,6 +54,14 @@ public class Exprs
   }
 
   /**
+   * Return a {@link Expr.BindingAnalysis} that represents an analysis of all provided args.
+   */
+  public static Expr.BindingAnalysis analyzeBindings(final List<Expr> args)
+  {
+    return Expr.BindingAnalysis.collectExprs(args);
+  }
+
+  /**
    * Decomposes any expr into a list of exprs that, if ANDed together, are equivalent to the input expr.
    *
    * @param expr any expr

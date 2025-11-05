@@ -22,6 +22,7 @@ package org.apache.druid.query.expression;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.druid.error.DruidException;
 import org.apache.druid.guice.annotations.Json;
 import org.apache.druid.math.expr.Expr;
 import org.apache.druid.math.expr.ExprEval;
@@ -40,7 +41,9 @@ import javax.inject.Inject;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 public class NestedDataExpressions
@@ -68,7 +71,7 @@ public class NestedDataExpressions
       {
         public StructExpr(List<Expr> args)
         {
-          super(NAME, args);
+          super(JsonObjectExprMacro.this, args);
         }
 
         @Override
@@ -88,13 +91,6 @@ public class NestedDataExpressions
           return ExprEval.ofComplex(ExpressionType.NESTED_DATA, theMap);
         }
 
-        @Override
-        public Expr visit(Shuttle shuttle)
-        {
-          List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-          return shuttle.visit(new StructExpr(newArgs));
-        }
-
         @Nullable
         @Override
         public ExpressionType getOutputType(InputBindingInspector inspector)
@@ -103,6 +99,144 @@ public class NestedDataExpressions
         }
       }
       return new StructExpr(args);
+    }
+  }
+
+  public static class JsonMergeExprMacro implements ExprMacroTable.ExprMacro
+  {
+    public static final String NAME = "json_merge";
+
+    private final ObjectMapper jsonMapper;
+
+    @Inject
+    public JsonMergeExprMacro(
+        @Json ObjectMapper jsonMapper
+    )
+    {
+      this.jsonMapper = jsonMapper;
+    }
+
+    @Override
+    public String name()
+    {
+      return NAME;
+    }
+
+    @Override
+    public Expr apply(List<Expr> args)
+    {
+      if (args.size() < 2) {
+        throw validationFailed("must have at least two arguments");
+      }
+
+      final class ParseJsonExpr extends ExprMacroTable.BaseScalarMacroFunctionExpr
+      {
+        public ParseJsonExpr(List<Expr> args)
+        {
+          super(JsonMergeExprMacro.this, args);
+        }
+
+        @Override
+        public ExprEval<?> eval(ObjectBinding bindings)
+        {
+          final Object retVal = getArgAsObject(args.get(0).eval(bindings), true);
+
+          if (retVal == null) {
+            // If any argument is null, the return of the entire function is null.
+            return ExprEval.ofComplex(ExpressionType.NESTED_DATA, null);
+          }
+
+          for (int i = 1; i < args.size(); i++) {
+            final Object argAsObject = getArgAsObject(args.get(i).eval(bindings), false);
+
+            if (argAsObject == null) {
+              // If any argument is null, the return of the entire function is null.
+              return ExprEval.ofComplex(ExpressionType.NESTED_DATA, null);
+            } else if (retVal instanceof Map) {
+              // Allow merging maps into maps.
+              if (argAsObject instanceof Map) {
+                ((Map<?, ?>) retVal).putAll((Map) argAsObject);
+              } else {
+                throw JsonMergeExprMacro.this.processingFailed(
+                    "bad input[%s] in position[%d], expected object but got array",
+                    argAsObject,
+                    i
+                );
+              }
+            } else if (retVal instanceof List) {
+              // Allow merging lists into lists.
+              if (argAsObject instanceof List) {
+                ((List<?>) retVal).addAll((List) argAsObject);
+              } else {
+                throw JsonMergeExprMacro.this.processingFailed(
+                    "bad input[%s] in position[%d], expected array but got object",
+                    argAsObject,
+                    i
+                );
+              }
+            } else {
+              // Always expecting Map or List from getArgAsObject. Should never get to this case.
+              throw DruidException.defensive("Unexpected type[%s]", retVal.getClass());
+            }
+          }
+
+          return ExprEval.ofComplex(ExpressionType.NESTED_DATA, retVal);
+        }
+
+        @Override
+        public ExpressionType getOutputType(InputBindingInspector inspector)
+        {
+          return ExpressionType.NESTED_DATA;
+        }
+
+        /**
+         * Returns either null, {@code Map<String, Object>}, or {@code List<Object>}.
+         *
+         * @param arg         original arg
+         * @param shallowCopy whether to shallow-copy the object
+         */
+        @Nullable
+        private Object getArgAsObject(ExprEval<?> arg, boolean shallowCopy)
+        {
+          if (arg.value() == null) {
+            return null;
+          }
+
+          if (arg.type().is(ExprType.STRING)) {
+            try {
+              final Object obj = jsonMapper.readValue(arg.asString(), Object.class);
+              if (obj == null || obj instanceof Map || obj instanceof List) {
+                return obj;
+              } else {
+                throw JsonMergeExprMacro.this.processingFailed("bad string input [%s]", arg.asString());
+              }
+            }
+            catch (JsonProcessingException e) {
+              throw JsonMergeExprMacro.this.processingFailed(e, "bad string input [%s]", arg.asString());
+            }
+          }
+
+          if (arg.type().is(ExprType.COMPLEX)) {
+            final Object unwrapped = unwrap(arg.value());
+            if (unwrapped instanceof Map) {
+              return shallowCopy ? new LinkedHashMap<String, Object>((Map) unwrapped) : unwrapped;
+            } else if (unwrapped instanceof List) {
+              return shallowCopy ? new ArrayList<>((List) unwrapped) : unwrapped;
+            } else if (unwrapped instanceof Object[]) {
+              return shallowCopy ? new ArrayList<>(Arrays.asList(((Object[]) unwrapped))) : unwrapped;
+            } else {
+              throw JsonMergeExprMacro.this.processingFailed("bad complex input [%s]", arg.asString());
+            }
+          }
+
+          throw JsonMergeExprMacro.this.processingFailed(
+              "invalid input expected %s but got %s instead",
+              ExpressionType.STRING,
+              arg.type()
+          );
+        }
+      }
+      return new ParseJsonExpr(args);
     }
   }
 
@@ -133,7 +267,7 @@ public class NestedDataExpressions
       {
         public ToJsonStringExpr(List<Expr> args)
         {
-          super(name(), args);
+          super(ToJsonStringExprMacro.this, args);
         }
 
         @Override
@@ -155,13 +289,6 @@ public class NestedDataExpressions
                 input.value()
             );
           }
-        }
-
-        @Override
-        public Expr visit(Shuttle shuttle)
-        {
-          List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-          return shuttle.visit(new ToJsonStringExpr(newArgs));
         }
 
         @Nullable
@@ -202,7 +329,7 @@ public class NestedDataExpressions
       {
         public ParseJsonExpr(List<Expr> args)
         {
-          super(name(), args);
+          super(ParseJsonExprMacro.this, args);
         }
 
         @Override
@@ -228,13 +355,6 @@ public class NestedDataExpressions
               ExpressionType.STRING,
               arg.type()
           );
-        }
-
-        @Override
-        public Expr visit(Shuttle shuttle)
-        {
-          List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-          return shuttle.visit(new ParseJsonExpr(newArgs));
         }
 
         @Nullable
@@ -275,7 +395,7 @@ public class NestedDataExpressions
       {
         public ParseJsonExpr(List<Expr> args)
         {
-          super(name(), args);
+          super(TryParseJsonExprMacro.this, args);
         }
 
         @Override
@@ -300,13 +420,6 @@ public class NestedDataExpressions
               ExpressionType.NESTED_DATA,
               null
           );
-        }
-
-        @Override
-        public Expr visit(Shuttle shuttle)
-        {
-          List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-          return shuttle.visit(new ParseJsonExpr(newArgs));
         }
 
         @Nullable
@@ -350,7 +463,7 @@ public class NestedDataExpressions
 
       public JsonValueExpr(List<Expr> args)
       {
-        super(name(), args);
+        super(JsonValueExprMacro.this, args);
         this.parts = getJsonPathPartsFromLiteral(JsonValueExprMacro.this, args.get(1));
       }
 
@@ -364,18 +477,7 @@ public class NestedDataExpressions
         if (valAtPath.type().isPrimitive() || valAtPath.type().isPrimitiveArray()) {
           return valAtPath;
         }
-        return ExprEval.of(null);
-      }
-
-      @Override
-      public Expr visit(Shuttle shuttle)
-      {
-        List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-        if (newArgs.get(1).isLiteral()) {
-          return shuttle.visit(new JsonValueExpr(newArgs));
-        } else {
-          return shuttle.visit(new JsonValueDynamicExpr(newArgs));
-        }
+        return ExprEval.ofMissing();
       }
 
       @Nullable
@@ -394,7 +496,7 @@ public class NestedDataExpressions
 
       public JsonValueCastExpr(List<Expr> args)
       {
-        super(name(), args);
+        super(JsonValueExprMacro.this, args);
         this.parts = getJsonPathPartsFromLiteral(JsonValueExprMacro.this, args.get(1));
         this.castTo = ExpressionType.fromString((String) args.get(2).getLiteralValue());
         if (castTo == null) {
@@ -418,17 +520,6 @@ public class NestedDataExpressions
         return ExprEval.ofType(castTo, null);
       }
 
-      @Override
-      public Expr visit(Shuttle shuttle)
-      {
-        List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-        if (newArgs.get(1).isLiteral()) {
-          return shuttle.visit(new JsonValueCastExpr(newArgs));
-        } else {
-          return shuttle.visit(new JsonValueDynamicExpr(newArgs));
-        }
-      }
-
       @Nullable
       @Override
       public ExpressionType getOutputType(InputBindingInspector inspector)
@@ -441,7 +532,7 @@ public class NestedDataExpressions
     {
       public JsonValueDynamicExpr(List<Expr> args)
       {
-        super(name(), args);
+        super(JsonValueExprMacro.this, args);
       }
 
       @Override
@@ -466,22 +557,7 @@ public class NestedDataExpressions
         if (valAtPath.type().isPrimitive() || valAtPath.type().isPrimitiveArray()) {
           return castTo == null ? valAtPath : valAtPath.castTo(castTo);
         }
-        return castTo == null ? ExprEval.of(null) : ExprEval.ofType(castTo, null);
-      }
-
-      @Override
-      public Expr visit(Shuttle shuttle)
-      {
-        List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-        if (newArgs.get(1).isLiteral()) {
-          if (newArgs.size() == 3 && newArgs.get(2).isLiteral()) {
-            return shuttle.visit(new JsonValueCastExpr(newArgs));
-          } else {
-            return shuttle.visit(new JsonValueExpr(newArgs));
-          }
-        } else {
-          return shuttle.visit(new JsonValueDynamicExpr(newArgs));
-        }
+        return castTo == null ? ExprEval.ofMissing() : ExprEval.ofType(castTo, null);
       }
 
       @Nullable
@@ -520,7 +596,7 @@ public class NestedDataExpressions
 
       public JsonQueryExpr(List<Expr> args)
       {
-        super(name(), args);
+        super(JsonQueryExprMacro.this, args);
         this.parts = getJsonPathPartsFromLiteral(JsonQueryExprMacro.this, args.get(1));
       }
 
@@ -532,17 +608,6 @@ public class NestedDataExpressions
             ExpressionType.NESTED_DATA,
             NestedPathFinder.find(unwrap(input), parts)
         );
-      }
-
-      @Override
-      public Expr visit(Shuttle shuttle)
-      {
-        List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-        if (newArgs.get(1).isLiteral()) {
-          return shuttle.visit(new JsonQueryExpr(newArgs));
-        } else {
-          return shuttle.visit(new JsonQueryDynamicExpr(newArgs));
-        }
       }
 
       @Nullable
@@ -558,7 +623,7 @@ public class NestedDataExpressions
     {
       public JsonQueryDynamicExpr(List<Expr> args)
       {
-        super(name(), args);
+        super(JsonQueryExprMacro.this, args);
       }
 
       @Override
@@ -571,17 +636,6 @@ public class NestedDataExpressions
             ExpressionType.NESTED_DATA,
             NestedPathFinder.find(unwrap(input), parts)
         );
-      }
-
-      @Override
-      public Expr visit(Shuttle shuttle)
-      {
-        List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-        if (newArgs.get(1).isLiteral()) {
-          return shuttle.visit(new JsonQueryExpr(newArgs));
-        } else {
-          return shuttle.visit(new JsonQueryDynamicExpr(newArgs));
-        }
       }
 
       @Nullable
@@ -620,7 +674,7 @@ public class NestedDataExpressions
 
       public JsonQueryArrayExpr(List<Expr> args)
       {
-        super(name(), args);
+        super(JsonQueryArrayExprMacro.this, args);
         this.parts = getJsonPathPartsFromLiteral(JsonQueryArrayExprMacro.this, args.get(1));
       }
 
@@ -641,23 +695,12 @@ public class NestedDataExpressions
         );
       }
 
-      @Override
-      public Expr visit(Shuttle shuttle)
-      {
-        List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-        if (newArgs.get(1).isLiteral()) {
-          return shuttle.visit(new JsonQueryArrayExpr(newArgs));
-        } else {
-          return shuttle.visit(new JsonQueryArrayDynamicExpr(newArgs));
-        }
-      }
-
       @Nullable
       @Override
       public ExpressionType getOutputType(InputBindingInspector inspector)
       {
-        // call all the output JSON typed
-        return ExpressionType.NESTED_DATA;
+        // call all the output ARRAY<COMPLEX<json>> typed
+        return JSON_ARRAY;
       }
     }
 
@@ -665,7 +708,7 @@ public class NestedDataExpressions
     {
       public JsonQueryArrayDynamicExpr(List<Expr> args)
       {
-        super(name(), args);
+        super(JsonQueryArrayExprMacro.this, args);
       }
 
       @Override
@@ -685,17 +728,6 @@ public class NestedDataExpressions
             JSON_ARRAY,
             ExprEval.bestEffortOf(value).asArray()
         );
-      }
-
-      @Override
-      public Expr visit(Shuttle shuttle)
-      {
-        List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-        if (newArgs.get(1).isLiteral()) {
-          return shuttle.visit(new JsonQueryArrayExpr(newArgs));
-        } else {
-          return shuttle.visit(new JsonQueryArrayDynamicExpr(newArgs));
-        }
       }
 
       @Nullable
@@ -750,7 +782,7 @@ public class NestedDataExpressions
       {
         public JsonPathsExpr(List<Expr> args)
         {
-          super(name(), args);
+          super(JsonPathsExprMacro.this, args);
         }
 
         @Override
@@ -767,13 +799,6 @@ public class NestedDataExpressions
               ExpressionType.STRING_ARRAY,
               transformed
           );
-        }
-
-        @Override
-        public Expr visit(Shuttle shuttle)
-        {
-          List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-          return shuttle.visit(new JsonPathsExpr(newArgs));
         }
 
         @Nullable
@@ -805,7 +830,7 @@ public class NestedDataExpressions
       {
         public JsonKeysExpr(List<Expr> args)
         {
-          super(name(), args);
+          super(JsonKeysExprMacro.this, args);
         }
 
         @Override
@@ -818,15 +843,6 @@ public class NestedDataExpressions
           );
         }
 
-
-        @Override
-        public Expr visit(Shuttle shuttle)
-        {
-          List<Expr> newArgs = args.stream().map(x -> x.visit(shuttle)).collect(Collectors.toList());
-          return shuttle.visit(new JsonKeysExpr(newArgs));
-        }
-
-        @Nullable
         @Override
         public ExpressionType getOutputType(InputBindingInspector inspector)
         {

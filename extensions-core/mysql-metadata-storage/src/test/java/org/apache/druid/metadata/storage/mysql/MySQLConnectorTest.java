@@ -20,17 +20,19 @@
 package org.apache.druid.metadata.storage.mysql;
 
 import com.google.common.base.Supplier;
-import com.mysql.jdbc.exceptions.MySQLTransactionRollbackException;
-import com.mysql.jdbc.exceptions.MySQLTransientException;
 import org.apache.druid.metadata.MetadataStorageConnectorConfig;
 import org.apache.druid.metadata.MetadataStorageTablesConfig;
+import org.apache.druid.segment.metadata.CentralizedDatasourceSchemaConfig;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.sql.SQLException;
 import java.sql.SQLTransientConnectionException;
 import java.sql.SQLTransientException;
 
+@RunWith(Parameterized.class)
 public class MySQLConnectorTest
 {
   private static final MySQLConnectorDriverConfig MYSQL_DRIVER_CONFIG = new MySQLConnectorDriverConfig();
@@ -47,6 +49,21 @@ public class MySQLConnectorTest
   private static final Supplier<MetadataStorageTablesConfig> TABLES_CONFIG_SUPPLIER =
       () -> MetadataStorageTablesConfig.fromBase(null);
 
+  private CentralizedDatasourceSchemaConfig centralizedDatasourceSchemaConfig;
+
+  public MySQLConnectorTest(CentralizedDatasourceSchemaConfig centralizedDatasourceSchemaConfig)
+  {
+    this.centralizedDatasourceSchemaConfig = centralizedDatasourceSchemaConfig;
+  }
+
+  @Parameterized.Parameters(name = "{0}")
+  public static Object[][] constructorFeeder()
+  {
+    return new Object[][]{
+        {CentralizedDatasourceSchemaConfig.enabled(false)},
+        {CentralizedDatasourceSchemaConfig.enabled(true)}
+    };
+  }
 
   @Test
   public void testIsExceptionTransientMySql()
@@ -55,18 +72,16 @@ public class MySQLConnectorTest
         CONNECTOR_CONFIG_SUPPLIER,
         TABLES_CONFIG_SUPPLIER,
         new MySQLConnectorSslConfig(),
-        MYSQL_DRIVER_CONFIG
+        MYSQL_DRIVER_CONFIG,
+        centralizedDatasourceSchemaConfig
     );
-    Assert.assertTrue(connector.connectorIsTransientException(new MySQLTransientException()));
-    Assert.assertTrue(connector.connectorIsTransientException(new MySQLTransactionRollbackException()));
     Assert.assertTrue(
         connector.connectorIsTransientException(new SQLException("some transient failure", "s0", 1317))
     );
     Assert.assertFalse(
         connector.connectorIsTransientException(new SQLException("totally realistic test data", "s0", 1337))
     );
-    // this method does not specially handle normal transient exceptions either, since it is not vendor specific
-    Assert.assertFalse(
+    Assert.assertTrue(
         connector.connectorIsTransientException(new SQLTransientConnectionException("transient"))
     );
   }
@@ -78,10 +93,11 @@ public class MySQLConnectorTest
         CONNECTOR_CONFIG_SUPPLIER,
         TABLES_CONFIG_SUPPLIER,
         new MySQLConnectorSslConfig(),
-        MARIADB_DRIVER_CONFIG
+        MARIADB_DRIVER_CONFIG,
+        centralizedDatasourceSchemaConfig
     );
     // no vendor specific for MariaDb, so should always be false
-    Assert.assertFalse(connector.connectorIsTransientException(new MySQLTransientException()));
+    Assert.assertFalse(connector.connectorIsTransientException(new SQLTransientException()));
     Assert.assertFalse(
         connector.connectorIsTransientException(new SQLException("some transient failure", "s0", 1317))
     );
@@ -100,7 +116,8 @@ public class MySQLConnectorTest
         CONNECTOR_CONFIG_SUPPLIER,
         TABLES_CONFIG_SUPPLIER,
         new MySQLConnectorSslConfig(),
-        MYSQL_DRIVER_CONFIG
+        MYSQL_DRIVER_CONFIG,
+        centralizedDatasourceSchemaConfig
     );
 
     // The test method should return true only for
@@ -116,7 +133,7 @@ public class MySQLConnectorTest
         connector.isRootCausePacketTooBigException(new SQLTransientException())
     );
     Assert.assertFalse(
-        connector.isRootCausePacketTooBigException(new MySQLTransientException())
+        connector.isRootCausePacketTooBigException(new SQLTransientException())
     );
   }
 
@@ -127,7 +144,8 @@ public class MySQLConnectorTest
         CONNECTOR_CONFIG_SUPPLIER,
         TABLES_CONFIG_SUPPLIER,
         new MySQLConnectorSslConfig(),
-        MYSQL_DRIVER_CONFIG
+        MYSQL_DRIVER_CONFIG,
+        centralizedDatasourceSchemaConfig
     );
     Assert.assertEquals("LIMIT 100", connector.limitClause(100));
   }

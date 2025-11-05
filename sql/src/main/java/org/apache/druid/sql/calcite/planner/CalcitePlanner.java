@@ -43,6 +43,7 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexExecutor;
+import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlOperatorTable;
@@ -59,6 +60,7 @@ import org.apache.calcite.tools.Program;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.ValidationException;
 import org.apache.calcite.util.Pair;
+import org.apache.druid.sql.calcite.parser.DruidSqlParser;
 
 import javax.annotation.Nullable;
 import java.io.Reader;
@@ -199,7 +201,7 @@ public class CalcitePlanner implements Planner, ViewExpander
 
     state = CalcitePlanner.State.STATE_2_READY;
 
-    // If user specify own traitDef, instead of default default trait,
+    // If user specifies own traitDef, instead of default trait,
     // register the trait def specified in traitDefs.
     if (this.traitDefs == null) {
       planner.addRelTraitDef(ConventionTraitDef.INSTANCE);
@@ -226,14 +228,34 @@ public class CalcitePlanner implements Planner, ViewExpander
     }
     ensure(CalcitePlanner.State.STATE_2_READY);
     SqlParser parser = SqlParser.create(reader, parserConfig);
-    SqlNode sqlNode = parser.parseStmt();
+    SqlNode sqlNode = parser.parseStmtList();
     state = CalcitePlanner.State.STATE_3_PARSED;
     return sqlNode;
+  }
+
+  /**
+   * Skip parsing, moving state along to a {@link State#STATE_3_PARSED}. We have this because we
+   * parse before the planner is even created, using {@link DruidSqlParser}, in order to capture
+   * SET statements as early as possible.
+   */
+  public void skipParse()
+  {
+    switch (state) {
+      case STATE_0_CLOSED:
+      case STATE_1_RESET:
+        ready();
+        break;
+      default:
+        break;
+    }
+    ensure(CalcitePlanner.State.STATE_2_READY);
+    state = CalcitePlanner.State.STATE_3_PARSED;
   }
 
   @Override
   public SqlNode validate(SqlNode sqlNode) throws ValidationException
   {
+    Hook.PARSE_TREE.run(new Object[]{null, sqlNode});
     ensure(CalcitePlanner.State.STATE_3_PARSED);
     this.validator = createSqlValidator(createCatalogReader());
     try {
@@ -283,7 +305,7 @@ public class CalcitePlanner implements Planner, ViewExpander
   public RelRoot rel(SqlNode sql)
   {
     ensure(CalcitePlanner.State.STATE_4_VALIDATED);
-    SqlNode validatedSqlNode = Objects.requireNonNull(
+    Objects.requireNonNull(
         this.validatedSqlNode,
         "validatedSqlNode is null. Need to call #validate() first"
     );
@@ -293,13 +315,14 @@ public class CalcitePlanner implements Planner, ViewExpander
         rexBuilder
     );
     final SqlToRelConverter.Config config =
-        sqlToRelConverterConfig.withTrimUnusedFields(false);
+        sqlToRelConverterConfig.withTrimUnusedFields(false)
+                               .withHintStrategyTable(DruidHint.HINT_STRATEGY_TABLE);
     final SqlToRelConverter sqlToRelConverter =
-        new SqlToRelConverter(this, validator,
-                              createCatalogReader(), cluster, convertletTable, config
+        new DruidSqlToRelConverter(this, validator,
+                                   createCatalogReader(), cluster, convertletTable, config
         );
     RelRoot root =
-        sqlToRelConverter.convertQuery(validatedSqlNode, false, true);
+        sqlToRelConverter.convertQuery(sql, false, true);
     root = root.withRel(sqlToRelConverter.flattenTypes(root.rel, true));
     final RelBuilder relBuilder =
         config.getRelBuilderFactory().create(cluster, null);

@@ -44,17 +44,20 @@ import org.apache.druid.indexing.common.task.TestAppenderatorsManager;
 import org.apache.druid.indexing.overlord.TestTaskRunner;
 import org.apache.druid.java.util.common.FileUtils;
 import org.apache.druid.java.util.http.client.response.StringFullResponseHolder;
+import org.apache.druid.query.policy.NoopPolicyEnforcer;
 import org.apache.druid.rpc.HttpResponseException;
 import org.apache.druid.rpc.indexing.OverlordClient;
 import org.apache.druid.segment.IndexIO;
 import org.apache.druid.segment.IndexMergerV9Factory;
+import org.apache.druid.segment.TestIndex;
 import org.apache.druid.segment.handoff.SegmentHandoffNotifierFactory;
 import org.apache.druid.segment.join.NoopJoinableFactory;
 import org.apache.druid.segment.metadata.CentralizedDatasourceSchemaConfig;
-import org.apache.druid.segment.realtime.firehose.NoopChatHandlerProvider;
+import org.apache.druid.segment.realtime.NoopChatHandlerProvider;
 import org.apache.druid.server.coordination.ChangeRequestHistory;
 import org.apache.druid.server.coordination.ChangeRequestsSnapshot;
 import org.apache.druid.server.security.AuthTestUtils;
+import org.apache.druid.utils.JvmUtils;
 import org.easymock.EasyMock;
 import org.jboss.netty.handler.codec.http.DefaultHttpResponse;
 import org.jboss.netty.handler.codec.http.HttpResponseStatus;
@@ -113,9 +116,7 @@ public class WorkerTaskManagerTest
   {
     TaskConfig taskConfig = new TaskConfigBuilder()
         .setBaseDir(FileUtils.createTempDir().toString())
-        .setDefaultRowFlushBoundary(0)
         .setRestoreTasksOnRestart(restoreTasksOnRestart)
-        .setBatchProcessingMode(TaskConfig.BATCH_PROCESSING_MODE_DEFAULT.name())
         .build();
 
     TaskActionClientFactory taskActionClientFactory = EasyMock.createNiceMock(TaskActionClientFactory.class);
@@ -134,6 +135,7 @@ public class WorkerTaskManagerTest
                 null,
                 taskActionClientFactory,
                 null,
+                NoopPolicyEnforcer.instance(),
                 null,
                 null,
                 null,
@@ -143,9 +145,10 @@ public class WorkerTaskManagerTest
                 notifierFactory,
                 null,
                 null,
+                null,
                 NoopJoinableFactory.INSTANCE,
                 null,
-                new SegmentCacheManagerFactory(jsonMapper),
+                new SegmentCacheManagerFactory(TestIndex.INDEX_IO, jsonMapper),
                 jsonMapper,
                 indexIO,
                 null,
@@ -168,7 +171,8 @@ public class WorkerTaskManagerTest
                 null,
                 null,
                 "1",
-                CentralizedDatasourceSchemaConfig.create()
+                CentralizedDatasourceSchemaConfig.create(),
+                JvmUtils.getRuntimeInfo()
             ),
             taskConfig,
             location
@@ -450,6 +454,24 @@ public class WorkerTaskManagerTest
     return new NoopTask(id, null, null, 100, 0, ImmutableMap.of(Tasks.PRIORITY_KEY, 0));
   }
 
+  private NoopTask createNoopTask(String id, String dataSource)
+  {
+    return new NoopTask(id, null, dataSource, 100, 0, ImmutableMap.of(Tasks.PRIORITY_KEY, 0));
+  }
+
+  private NoopTask createNoopFailingTask(String id, String dataSource)
+  {
+    return new NoopTask(id, null, dataSource, 100, 0, ImmutableMap.of(Tasks.PRIORITY_KEY, 0))
+    {
+      @Override
+      public TaskStatus runTask(TaskToolbox toolbox) throws Exception
+      {
+        Thread.sleep(getRunTime());
+        return TaskStatus.failure(getId(), "Failed to complete the task");
+      }
+    };
+  }
+
   /**
    * Start the {@link #workerTaskManager}, submit a {@link NoopTask}, wait for it to be complete. Common preamble
    * for various tests of {@link WorkerTaskManager#doCompletedTasksCleanup()}.
@@ -479,5 +501,52 @@ public class WorkerTaskManagerTest
 
     EasyMock.reset(overlordClient);
     return task;
+  }
+
+  @Test
+  public void getWorkerTaskStatsTest() throws Exception
+  {
+    EasyMock.expect(overlordClient.withRetryPolicy(EasyMock.anyObject())).andReturn(overlordClient).anyTimes();
+    EasyMock.replay(overlordClient);
+
+    Task task1 = createNoopTask("task1", "wikipedia");
+    Task task2 = createNoopTask("task2", "wikipedia");
+    Task task3 = createNoopFailingTask("task3", "animals");
+
+    workerTaskManager.start();
+    // befor assigning tasks we should get no running tasks
+    Assert.assertEquals(workerTaskManager.getWorkerRunningTasks().size(), 0L);
+
+    workerTaskManager.assignTask(task1);
+    workerTaskManager.assignTask(task2);
+    workerTaskManager.assignTask(task3);
+
+    Thread.sleep(25);
+    //should return all 3 tasks as running
+    Assert.assertEquals(workerTaskManager.getWorkerRunningTasks(), ImmutableMap.of(
+        "wikipedia", 2L,
+        "animals", 1L
+    ));
+
+    Map<String, Long> runningTasks;
+    do {
+      runningTasks = workerTaskManager.getWorkerRunningTasks();
+      Thread.sleep(10);
+    } while (!runningTasks.isEmpty());
+
+    // When running tasks are empty all task should be reported as completed and
+    // one of the task for animals datasource should fail and other 2 tasks in
+    // the wikipedia datasource should succeed
+    Assert.assertEquals(workerTaskManager.getWorkerCompletedTasks(), ImmutableMap.of(
+        "wikipedia", 2L,
+        "animals", 1L
+    ));
+    Assert.assertEquals(workerTaskManager.getWorkerFailedTasks(), ImmutableMap.of(
+            "animals", 1L
+    ));
+    Assert.assertEquals(workerTaskManager.getWorkerSuccessfulTasks(), ImmutableMap.of(
+            "wikipedia", 2L
+    ));
+    Assert.assertEquals(workerTaskManager.getWorkerAssignedTasks().size(), 0L);
   }
 }

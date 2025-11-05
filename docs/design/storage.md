@@ -28,7 +28,7 @@ Druid stores data in datasources, which are similar to tables in a traditional R
 
 ![Segment timeline](../assets/druid-timeline.png)
 
-A datasource may have anywhere from just a few segments, up to hundreds of thousands and even millions of segments. Each segment is created by a MiddleManager as mutable and uncommitted. Data is queryable as soon as it is added to an uncommitted segment. The segment building process accelerates later queries by producing a data file that is compact and indexed:
+A datasource may have anywhere from just a few segments, up to hundreds of thousands and even millions of segments. Each segment is created by a Middle Manager as mutable and uncommitted. Data is queryable as soon as it is added to an uncommitted segment. The segment building process accelerates later queries by producing a data file that is compact and indexed:
 
 - Conversion to columnar format
 - Indexing with bitmap indexes
@@ -37,7 +37,7 @@ A datasource may have anywhere from just a few segments, up to hundreds of thous
     - Bitmap compression for bitmap indexes
     - Type-aware compression for all columns
 
-Periodically, segments are committed and published to [deep storage](deep-storage.md), become immutable, and move from MiddleManagers to the Historical services. An entry about the segment is also written to the [metadata store](metadata-storage.md). This entry is a self-describing bit of metadata about the segment, including things like the schema of the segment, its size, and its location on deep storage. These entries tell the Coordinator what data is available on the cluster.
+Periodically, segments are committed and published to [deep storage](deep-storage.md), become immutable, and move from Middle Managers to the Historical services. An entry about the segment is also written to the [metadata store](metadata-storage.md). This entry is a self-describing bit of metadata about the segment, including things like the schema of the segment, its size, and its location on deep storage. These entries tell the Coordinator what data is available on the cluster.
 
 For details on the segment file format, see [segment files](segments.md).
 
@@ -67,7 +67,7 @@ On the Coordinator / Historical side:
 Segments all have a four-part identifier with the following components:
 
 - Datasource name.
-- Time interval (for the time chunk containing the segment; this corresponds to the `segmentGranularity` specified at ingestion time).
+- Time interval for the time chunk containing the segment; this corresponds to the `segmentGranularity` specified at ingestion time. Uses the same format as [query granularity](../querying/granularities.md).
 - Version number (generally an ISO8601 timestamp corresponding to when the segment set was first started).
 - Partition number (an integer, unique within a datasource+interval+version; may not necessarily be contiguous).
 
@@ -114,14 +114,14 @@ Druid has an architectural separation between ingestion and querying, as describ
 
 On the ingestion side, Druid's primary [ingestion methods](../ingestion/index.md#ingestion-methods) are all pull-based and offer transactional guarantees. This means that you are guaranteed that ingestion using these methods will publish in an all-or-nothing manner:
 
-- Supervised "seekable-stream" ingestion methods like [Kafka](../development/extensions-core/kafka-ingestion.md) and [Kinesis](../development/extensions-core/kinesis-ingestion.md). With these methods, Druid commits stream offsets to its [metadata store](metadata-storage.md) alongside segment metadata, in the same transaction. Note that ingestion of data that has not yet been published can be rolled back if ingestion tasks fail. In this case, partially-ingested data is
+- Supervised "seekable-stream" ingestion methods like [Kafka](../ingestion/kafka-ingestion.md) and [Kinesis](../ingestion/kinesis-ingestion.md). With these methods, Druid commits stream offsets to its [metadata store](metadata-storage.md) alongside segment metadata, in the same transaction. Note that ingestion of data that has not yet been published can be rolled back if ingestion tasks fail. In this case, partially-ingested data is
 discarded, and Druid will resume ingestion from the last committed set of stream offsets. This ensures exactly-once publishing behavior.
 - [Hadoop-based batch ingestion](../ingestion/hadoop.md). Each task publishes all segment metadata in a single transaction.
 - [Native batch ingestion](../ingestion/native-batch.md). In parallel mode, the supervisor task publishes all segment metadata in a single transaction after the subtasks are finished. In simple (single-task) mode, the single task publishes all segment metadata in a single transaction after it is complete.
 
 Additionally, some ingestion methods offer an _idempotency_ guarantee. This means that repeated executions of the same ingestion will not cause duplicate data to be ingested:
 
-- Supervised "seekable-stream" ingestion methods like [Kafka](../development/extensions-core/kafka-ingestion.md) and [Kinesis](../development/extensions-core/kinesis-ingestion.md) are idempotent due to the fact that stream offsets and segment metadata are stored together and updated in lock-step.
+- Supervised "seekable-stream" ingestion methods like [Kafka](../ingestion/kafka-ingestion.md) and [Kinesis](../ingestion/kinesis-ingestion.md) are idempotent due to the fact that stream offsets and segment metadata are stored together and updated in lock-step.
 - [Hadoop-based batch ingestion](../ingestion/hadoop.md) is idempotent unless one of your input sources is the same Druid datasource that you are ingesting into. In this case, running the same task twice is non-idempotent, because you are adding to existing data instead of overwriting it.
 - [Native batch ingestion](../ingestion/native-batch.md) is idempotent unless
 [`appendToExisting`](../ingestion/native-batch.md) is true, or one of your input sources is the same Druid datasource that you are ingesting into. In either of these two cases, running the same task twice is non-idempotent, because you are adding to existing data instead of overwriting it.
@@ -135,6 +135,6 @@ Typically, atomic replacement in Druid is based on a core set concept that works
 When a time chunk is overwritten, a new core set of segments is created with a higher version number. The core set must all be available before the Broker will use them instead of the older set. There can also only be one core set per version per time chunk. Druid will also only use a single version at a time per time chunk. Together, these properties provide Druid's atomic replacement guarantees.
 
 Druid also supports an experimental segment locking mode that is activated by setting
-[`forceTimeChunkLock`](../ingestion/tasks.md#context) to false in the context of an ingestion task. In this case, Druid creates an atomic update group using the existing version for the time chunk, instead of creating a new core set with a new version number. There can be multiple atomic update groups with the same version number per time chunk. Each one replaces a specific set of earlier segments in the same time chunk and with the same version number. Druid will query the latest one that is fully available. This is a more powerful version of the core set concept, because it enables atomically replacing a subset of data for a time chunk, as well as doing atomic replacement and appending simultaneously.
+[`forceTimeChunkLock`](../ingestion/tasks.md#context-parameters) to false in the context of an ingestion task. In this case, Druid creates an atomic update group using the existing version for the time chunk, instead of creating a new core set with a new version number. There can be multiple atomic update groups with the same version number per time chunk. Each one replaces a specific set of earlier segments in the same time chunk and with the same version number. Druid will query the latest one that is fully available. This is a more powerful version of the core set concept, because it enables atomically replacing a subset of data for a time chunk, as well as doing atomic replacement and appending simultaneously.
 
 If segments become unavailable due to multiple Historicals going offline simultaneously (beyond your replication factor), then Druid queries will include only the segments that are still available. In the background, Druid will reload these unavailable segments on other Historicals as quickly as possible, at which point they will be included in queries again.

@@ -26,10 +26,12 @@ import {
   Menu,
   MenuDivider,
   MenuItem,
+  Popover,
   Tag,
 } from '@blueprintjs/core';
 import { IconNames } from '@blueprintjs/icons';
-import { Popover2 } from '@blueprintjs/popover2';
+import classNames from 'classnames';
+import { select, selectAll } from 'd3-selection';
 import {
   C,
   Column,
@@ -39,13 +41,17 @@ import {
   SqlExpression,
   SqlQuery,
   SqlType,
-} from '@druid-toolkit/query';
-import classNames from 'classnames';
-import { select, selectAll } from 'd3-selection';
+} from 'druid-query-toolkit';
 import type { JSX } from 'react';
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { ClearableInput, LearnMore, Loader } from '../../../components';
+import {
+  ClearableInput,
+  ENABLED_DISABLED_OPTIONS_TEXT,
+  LearnMore,
+  Loader,
+  MenuBoolean,
+} from '../../../components';
 import { AsyncActionDialog } from '../../../dialogs';
 import type { Execution, ExternalConfig, IngestQueryPattern } from '../../../druid-models';
 import {
@@ -76,10 +82,11 @@ import {
   dataTypeToIcon,
   deepSet,
   DruidError,
+  EXPERIMENTAL_ICON,
   filterMap,
   oneOf,
   queryDruidSql,
-  sampleDataToQuery,
+  queryResultToValuesQuery,
   tickIcon,
   timeFormatToSql,
   wait,
@@ -394,12 +401,15 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
 
   const [existingTableState] = useQueryManager<string, string[]>({
     initQuery: '',
-    processQuery: async (_: string, _cancelToken) => {
+    processQuery: async (_, signal) => {
       // Check if datasource already exists
-      const tables = await queryDruidSql({
-        query: `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'druid' ORDER BY TABLE_NAME ASC`,
-        resultFormat: 'array',
-      });
+      const tables = await queryDruidSql(
+        {
+          query: `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'druid' ORDER BY TABLE_NAME ASC`,
+          resultFormat: 'array',
+        },
+        signal,
+      );
 
       return tables.map(t => t[0]);
     },
@@ -413,7 +423,7 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
 
   const [sampleState] = useQueryManager<ExternalConfig, QueryResult, Execution>({
     query: sampleExternalConfig,
-    processQuery: async sampleExternalConfig => {
+    processQuery: async (sampleExternalConfig, signal) => {
       const sampleResponse = await postToSampler(
         {
           type: 'index_parallel',
@@ -456,6 +466,7 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
           },
         },
         'sample',
+        signal,
       );
 
       const columns = getHeaderFromSampleResponse(sampleResponse).map(({ name, type }) => {
@@ -479,7 +490,7 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
 
   const sampleDataQuery = useMemo(() => {
     if (!sampleState.data) return;
-    return sampleDataToQuery(sampleState.data);
+    return queryResultToValuesQuery(sampleState.data);
   }, [sampleState.data]);
 
   const previewQueryString = useLastDefined(
@@ -490,7 +501,7 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
 
   const [previewResultState] = useQueryManager<string, QueryResult, Execution>({
     query: previewQueryString,
-    processQuery: async (previewQueryString, cancelToken) => {
+    processQuery: async (previewQueryString, signal) => {
       if (WorkbenchQuery.isTaskEngineNeeded(previewQueryString)) {
         return extractResult(
           await submitTaskQuery({
@@ -500,7 +511,7 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
               finalizeAggregations: false,
               sqlOuterLimit: 25,
             },
-            cancelToken,
+            signal,
           }),
         );
       } else {
@@ -509,13 +520,13 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
           result = await queryRunner.runQuery({
             query: previewQueryString,
             extraQueryContext: { sqlOuterLimit: 25, sqlStringifyArrays: false },
-            cancelToken,
+            signal,
           });
         } catch (e) {
           throw new DruidError(e);
         }
 
-        return result.attachQuery({}, SqlQuery.maybeParse(previewQueryString));
+        return result.attachQuery({} as any, SqlQuery.maybeParse(previewQueryString));
       }
     },
     backgroundStatusCheck: executionBackgroundResultStatusCheck,
@@ -555,7 +566,7 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
       subtitle="Configure schema"
       toolbar={
         <>
-          <Popover2
+          <Popover
             position="bottom"
             content={
               <Menu>
@@ -586,9 +597,9 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
                 {ingestQueryPattern ? ingestQueryPattern.filters.length : '?'}
               </Tag>
             </Button>
-          </Popover2>
+          </Popover>
           {ingestQueryPattern && (
-            <Popover2
+            <Popover
               position="bottom"
               content={
                 <Menu>
@@ -624,10 +635,10 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
                     : ingestQueryPattern.partitionedBy}
                 </Tag>
               </Button>
-            </Popover2>
+            </Popover>
           )}
           {ingestQueryPattern && (
-            <Popover2
+            <Popover
               position="bottom"
               content={
                 <Menu>
@@ -640,6 +651,7 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
                       <MenuItem
                         icon={IconNames.CROSS}
                         text="Remove"
+                        shouldDismissPopover={false}
                         onClick={() =>
                           updatePattern({
                             ...ingestQueryPattern,
@@ -652,17 +664,15 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
                   <MenuItem icon={IconNames.PLUS} text="Add column clustering">
                     {filterMap(ingestQueryPattern.dimensions, (dimension, i) => {
                       const outputName = dimension.getOutputName();
-                      if (
-                        outputName === TIME_COLUMN ||
-                        ingestQueryPattern.clusteredBy.includes(i)
-                      ) {
-                        return;
-                      }
+                      if (ingestQueryPattern.clusteredBy.includes(i)) return;
 
                       return (
                         <MenuItem
                           key={i}
                           text={outputName}
+                          disabled={
+                            outputName === TIME_COLUMN && ingestQueryPattern.forceSegmentSortByTime
+                          }
                           onClick={() =>
                             updatePattern({
                               ...ingestQueryPattern,
@@ -674,6 +684,17 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
                       );
                     })}
                   </MenuItem>
+                  <MenuDivider />
+                  <MenuBoolean
+                    icon={IconNames.GEOTIME}
+                    text="Force segment sort by time"
+                    value={ingestQueryPattern.forceSegmentSortByTime}
+                    onValueChange={v =>
+                      updatePattern({ ...ingestQueryPattern, forceSegmentSortByTime: Boolean(v) })
+                    }
+                    optionsText={ENABLED_DISABLED_OPTIONS_TEXT}
+                    optionsLabelElement={{ false: EXPERIMENTAL_ICON }}
+                  />
                 </Menu>
               }
             >
@@ -683,7 +704,7 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
                   {ingestQueryPattern.clusteredBy.length}
                 </Tag>
               </Button>
-            </Popover2>
+            </Popover>
           )}
           <Button
             icon={IconNames.COMPRESSED}
@@ -751,7 +772,7 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
           </div>
           {effectiveMode !== 'sql' && ingestQueryPattern && (
             <div className="control-line right">
-              <Popover2
+              <Popover
                 className="add-column-control"
                 position="bottom"
                 content={
@@ -805,12 +826,12 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
                 }
               >
                 <Button className="add-column" icon={IconNames.PLUS} text="Add column" />
-              </Popover2>
+              </Popover>
               <ClearableInput
                 className="column-filter-control"
                 value={columnSearch}
                 placeholder="Search columns"
-                onChange={setColumnSearch}
+                onValueChange={setColumnSearch}
               />
             </div>
           )}
@@ -900,7 +921,7 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
                     of a column you can cast it to a specific type. You can do that by clicking on a
                     column header.
                   </p>
-                  <LearnMore href={`${getLink('DOCS')}/ingestion/schema-design.html`} />
+                  <LearnMore href={`${getLink('DOCS')}/ingestion/schema-design`} />
                 </Callout>
               </FormGroup>
             )}
@@ -961,7 +982,7 @@ export const SchemaStep = function SchemaStep(props: SchemaStepProps) {
                 <AnchorButton
                   icon={IconNames.HELP}
                   text="Learn more..."
-                  href={`${getLink('DOCS')}/ingestion/schema-model.html#primary-timestamp`}
+                  href={`${getLink('DOCS')}/ingestion/schema-model#primary-timestamp`}
                   target="_blank"
                   intent={Intent.WARNING}
                   minimal

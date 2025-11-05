@@ -19,10 +19,13 @@
 
 package org.apache.druid.segment.loading;
 
+import org.apache.druid.segment.Segment;
+import org.apache.druid.segment.SegmentLazyLoadFailCallback;
 import org.apache.druid.timeline.DataSegment;
 
 import java.io.File;
-import java.util.concurrent.ExecutorService;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Test implementation of {@link SegmentCacheManager} which throws an
@@ -30,9 +33,38 @@ import java.util.concurrent.ExecutorService;
  */
 public class NoopSegmentCacheManager implements SegmentCacheManager
 {
+  @Override
+  public boolean canHandleSegments()
+  {
+    throw new UnsupportedOperationException();
+  }
 
   @Override
-  public boolean isSegmentCached(DataSegment segment)
+  public List<DataSegment> getCachedSegments()
+  {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public void storeInfoFile(DataSegment segment)
+  {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public void removeInfoFile(DataSegment segment)
+  {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public void load(DataSegment segment)
+  {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public void bootstrap(DataSegment segment, SegmentLazyLoadFailCallback loadFailed)
   {
     throw new UnsupportedOperationException();
   }
@@ -44,25 +76,31 @@ public class NoopSegmentCacheManager implements SegmentCacheManager
   }
 
   @Override
-  public boolean reserve(DataSegment segment)
+  public void drop(DataSegment segment)
   {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  public boolean release(DataSegment segment)
+  public Optional<Segment> acquireCachedSegment(DataSegment dataSegment)
   {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  public void cleanup(DataSegment segment)
+  public AcquireSegmentAction acquireSegment(DataSegment dataSegment)
   {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  public void loadSegmentIntoPageCache(DataSegment segment, ExecutorService exec)
+  public void shutdownBootstrap()
+  {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public void shutdown()
   {
     throw new UnsupportedOperationException();
   }

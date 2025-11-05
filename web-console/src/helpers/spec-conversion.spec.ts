@@ -123,11 +123,6 @@ describe('spec conversion', () => {
     expect(converted.queryString).toMatchSnapshot();
 
     expect(converted.queryContext).toEqual({
-      arrayIngestMode: 'array',
-      groupByEnableMultiValueUnnesting: false,
-      maxParseExceptions: 3,
-      finalizeAggregations: false,
-      maxNumTasks: 5,
       indexSpec: {
         dimensionCompression: 'lzf',
       },
@@ -232,11 +227,7 @@ describe('spec conversion', () => {
 
     expect(converted.queryString).toMatchSnapshot();
 
-    expect(converted.queryContext).toEqual({
-      arrayIngestMode: 'array',
-      groupByEnableMultiValueUnnesting: false,
-      finalizeAggregations: false,
-    });
+    expect(converted.queryContext).toEqual({});
   });
 
   it('converts index_hadoop spec (with rollup)', () => {
@@ -357,11 +348,7 @@ describe('spec conversion', () => {
 
     expect(converted.queryString).toMatchSnapshot();
 
-    expect(converted.queryContext).toEqual({
-      arrayIngestMode: 'array',
-      groupByEnableMultiValueUnnesting: false,
-      finalizeAggregations: false,
-    });
+    expect(converted.queryContext).toEqual({});
   });
 
   it('converts with issue when there is a __time transform', () => {
@@ -663,5 +650,7 @@ describe('spec conversion', () => {
     });
 
     expect(converted.queryString).toMatchSnapshot();
+
+    expect(converted.queryContext).toEqual({});
   });
 });

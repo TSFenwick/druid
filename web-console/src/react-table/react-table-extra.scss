@@ -19,6 +19,12 @@
 @import '../variables';
 
 .ReactTable {
+  &.centered-table {
+    .rt-th,
+    .rt-td {
+      align-content: center;
+    }
+  }
   .rt-tr {
     min-height: 38px;
 
@@ -30,6 +36,11 @@
       .default-aggregated {
         padding: 0;
       }
+    }
+
+    .rt-th.wrapped,
+    .rt-td.wrapped {
+      white-space: normal;
     }
   }
 

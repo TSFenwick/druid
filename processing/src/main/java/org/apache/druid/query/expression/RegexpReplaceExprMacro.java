@@ -19,7 +19,6 @@
 
 package org.apache.druid.query.expression;
 
-import org.apache.druid.common.config.NullHandling;
 import org.apache.druid.math.expr.Expr;
 import org.apache.druid.math.expr.ExprEval;
 import org.apache.druid.math.expr.ExprMacroTable;
@@ -57,7 +56,7 @@ public class RegexpReplaceExprMacro implements ExprMacroTable.ExprMacro
   {
     public BaseRegexpReplaceExpr(final List<Expr> args)
     {
-      super(FN_NAME, args);
+      super(RegexpReplaceExprMacro.this, args);
     }
 
     @Nullable
@@ -65,12 +64,6 @@ public class RegexpReplaceExprMacro implements ExprMacroTable.ExprMacro
     public ExpressionType getOutputType(InputBindingInspector inspector)
     {
       return ExpressionType.STRING;
-    }
-
-    @Override
-    public Expr visit(Shuttle shuttle)
-    {
-      return shuttle.visit(apply(shuttle.visitAll(args)));
     }
   }
 
@@ -100,11 +93,11 @@ public class RegexpReplaceExprMacro implements ExprMacroTable.ExprMacro
         throw validationFailed("replacement must be a string literal");
       }
 
-      final String patternString = NullHandling.nullToEmptyIfNeeded((String) patternExpr.getLiteralValue());
+      final String patternString = (String) patternExpr.getLiteralValue();
 
       this.arg = args.get(0);
       this.pattern = patternString != null ? Pattern.compile(patternString) : null;
-      this.replacement = NullHandling.nullToEmptyIfNeeded((String) replacementExpr.getLiteralValue());
+      this.replacement = (String) replacementExpr.getLiteralValue();
     }
 
     @Nonnull
@@ -112,17 +105,17 @@ public class RegexpReplaceExprMacro implements ExprMacroTable.ExprMacro
     public ExprEval<?> eval(final ObjectBinding bindings)
     {
       if (pattern == null || replacement == null) {
-        return ExprEval.of(null);
+        return ExprEval.ofString(null);
       }
 
-      final String s = NullHandling.nullToEmptyIfNeeded(arg.eval(bindings).asString());
+      final String s = arg.eval(bindings).asString();
 
       if (s == null) {
-        return ExprEval.of(null);
+        return ExprEval.ofString(null);
       } else {
         final Matcher matcher = pattern.matcher(s);
         final String retVal = matcher.replaceAll(replacement);
-        return ExprEval.of(retVal);
+        return ExprEval.ofString(retVal);
       }
     }
   }
@@ -141,16 +134,16 @@ public class RegexpReplaceExprMacro implements ExprMacroTable.ExprMacro
     @Override
     public ExprEval<?> eval(final ObjectBinding bindings)
     {
-      final String s = NullHandling.nullToEmptyIfNeeded(args.get(0).eval(bindings).asString());
-      final String pattern = NullHandling.nullToEmptyIfNeeded(args.get(1).eval(bindings).asString());
-      final String replacement = NullHandling.nullToEmptyIfNeeded(args.get(2).eval(bindings).asString());
+      final String s = args.get(0).eval(bindings).asString();
+      final String pattern = args.get(1).eval(bindings).asString();
+      final String replacement = args.get(2).eval(bindings).asString();
 
       if (s == null || pattern == null || replacement == null) {
-        return ExprEval.of(null);
+        return ExprEval.ofString(null);
       } else {
         final Matcher matcher = Pattern.compile(pattern).matcher(s);
         final String retVal = matcher.replaceAll(replacement);
-        return ExprEval.of(retVal);
+        return ExprEval.ofString(retVal);
       }
     }
   }

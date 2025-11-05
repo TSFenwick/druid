@@ -37,7 +37,6 @@ import org.apache.druid.data.input.SplitHintSpec;
 import org.apache.druid.data.input.impl.CsvInputFormat;
 import org.apache.druid.data.input.impl.InlineInputSource;
 import org.apache.druid.data.input.impl.SplittableInputSource;
-import org.apache.druid.guice.DruidInjectorBuilder;
 import org.apache.druid.initialization.DruidModule;
 import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.common.StringUtils;
@@ -52,6 +51,7 @@ import org.apache.druid.server.security.AuthConfig;
 import org.apache.druid.server.security.AuthenticationResult;
 import org.apache.druid.server.security.ResourceAction;
 import org.apache.druid.sql.SqlQueryPlus;
+import org.apache.druid.sql.calcite.CalciteIngestionDmlTest.IngestionDmlComponentSupplier;
 import org.apache.druid.sql.calcite.external.ExternalDataSource;
 import org.apache.druid.sql.calcite.external.ExternalOperatorConversion;
 import org.apache.druid.sql.calcite.external.HttpOperatorConversion;
@@ -60,18 +60,21 @@ import org.apache.druid.sql.calcite.external.LocalOperatorConversion;
 import org.apache.druid.sql.calcite.parser.DruidSqlInsert;
 import org.apache.druid.sql.calcite.planner.Calcites;
 import org.apache.druid.sql.calcite.planner.PlannerConfig;
+import org.apache.druid.sql.calcite.run.SqlEngine;
 import org.apache.druid.sql.calcite.util.CalciteTests;
+import org.apache.druid.sql.calcite.util.DruidModuleCollection;
+import org.apache.druid.sql.calcite.util.SqlTestFramework.StandardComponentSupplier;
 import org.apache.druid.sql.guice.SqlBindings;
 import org.apache.druid.sql.http.SqlParameter;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.Matcher;
-import org.hamcrest.MatcherAssert;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.internal.matchers.ThrowableMessageMatcher;
+import org.junit.jupiter.api.AfterEach;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -82,6 +85,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Stream;
 
+import static org.hamcrest.MatcherAssert.assertThat;
+
+@SqlTestFrameworkConfig.ComponentSupplier(IngestionDmlComponentSupplier.class)
 public class CalciteIngestionDmlTest extends BaseCalciteQueryTest
 {
   protected static final Map<String, Object> DEFAULT_CONTEXT =
@@ -109,7 +115,7 @@ public class CalciteIngestionDmlTest extends BaseCalciteQueryTest
 
   protected final ExternalDataSource externalDataSource = new ExternalDataSource(
       new InlineInputSource("a,b,1\nc,d,2\n"),
-      new CsvInputFormat(ImmutableList.of("x", "y", "z"), null, false, false, 0),
+      new CsvInputFormat(ImmutableList.of("x", "y", "z"), null, false, false, 0, null),
       RowSignature.builder()
                   .add("x", ColumnType.STRING)
                   .add("y", ColumnType.STRING)
@@ -119,20 +125,34 @@ public class CalciteIngestionDmlTest extends BaseCalciteQueryTest
 
   protected boolean didTest = false;
 
-  public CalciteIngestionDmlTest()
+  public static class IngestionDmlComponentSupplier extends StandardComponentSupplier
   {
-    super(IngestionTestSqlEngine.INSTANCE);
-  }
+    public IngestionDmlComponentSupplier(TempDirProducer tempFolderProducer)
+    {
+      super(tempFolderProducer);
+    }
 
-  @Override
-  public void configureGuice(DruidInjectorBuilder builder)
-  {
-    super.configureGuice(builder);
+    @Override
+    public Class<? extends SqlEngine> getSqlEngineClass()
+    {
+      return IngestionTestSqlEngine.class;
+    }
 
-    builder.addModule(new DruidModule() {
+    @Override
+    public DruidModule getCoreModule()
+    {
+      return DruidModuleCollection.of(
+          super.getCoreModule(),
+          new ExternalDataSourceModule(),
+          new CustomInputSourceModule()
+        );
+    }
 
-      // Clone of MSQExternalDataSourceModule since it is not
-      // visible here.
+    /**
+     * Clone of MSQExternalDataSourceModule since it is not visible here.
+     */
+    private static final class ExternalDataSourceModule implements DruidModule
+    {
       @Override
       public List<? extends Module> getJacksonModules()
       {
@@ -145,15 +165,14 @@ public class CalciteIngestionDmlTest extends BaseCalciteQueryTest
       @Override
       public void configure(Binder binder)
       {
-        // Nothing to do.
       }
-    });
+    }
 
-    builder.addModule(new DruidModule() {
-
-      // Partial clone of MsqSqlModule, since that module is not
-      // visible to this one.
-
+    /**
+     * Partial clone of MsqSqlModule, since that module is not visible to this one.
+     */
+    private static final class CustomInputSourceModule implements DruidModule
+    {
       @Override
       public List<? extends Module> getJacksonModules()
       {
@@ -178,10 +197,10 @@ public class CalciteIngestionDmlTest extends BaseCalciteQueryTest
         SqlBindings.addOperatorConversion(binder, InlineOperatorConversion.class);
         SqlBindings.addOperatorConversion(binder, LocalOperatorConversion.class);
       }
-    });
+    }
   }
 
-  @After
+  @AfterEach
   public void tearDown()
   {
     // Catch situations where tests forgot to call "verify" on their tester.
@@ -378,7 +397,6 @@ public class CalciteIngestionDmlTest extends BaseCalciteQueryTest
         throw new ISE("Test must not have expectedQuery");
       }
 
-      queryLogHook.clearRecordedQueries();
       final Throwable e = Assert.assertThrows(
           Throwable.class,
           () -> {
@@ -386,8 +404,7 @@ public class CalciteIngestionDmlTest extends BaseCalciteQueryTest
           }
       );
 
-      MatcherAssert.assertThat(e, validationErrorMatcher);
-      Assert.assertTrue(queryLogHook.getRecordedQueries().isEmpty());
+      assertThat(e, validationErrorMatcher);
     }
 
     private void verifySuccess()
@@ -435,7 +452,7 @@ public class CalciteIngestionDmlTest extends BaseCalciteQueryTest
     private SqlQueryPlus sqlQuery()
     {
       return SqlQueryPlus.builder(sql)
-          .context(queryContext)
+          .queryContext(queryContext)
           .auth(authenticationResult)
           .build();
     }

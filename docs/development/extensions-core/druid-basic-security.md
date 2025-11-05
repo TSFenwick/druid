@@ -165,13 +165,7 @@ Authorizer that requests should be directed to.<br />
 
 ##### Credential iterations and API performance
 
-As noted above, `credentialIterations` determines the number of iterations used to hash a password. A higher number increases security, but costs more in terms of CPU utilization. 
-
-This cost affects API performance, including query times. The default setting of 10000 is intentionally high to prevent attackers from using brute force to guess passwords.
-
-You can decrease the number of iterations to speed up API response times, but it may expose your system to dictionary attacks. Therefore, only reduce the number of iterations if your environment fits one of the following conditions:
-- **All** passwords are long and random which make them as safe as a randomly-generated token.
-- You have secured network access to Druid so that no attacker can execute a dictionary attack against it.
+As noted above, the value of `credentialIterations` determines the number of iterations used to hash a password. A higher number of iterations increases security. The default value of 10,000 is intentionally high to prevent attackers from using brute force to guess passwords. We recommend that you don't lower this value. Druid caches the hash of up to 1000 passwords used in the last hour to ensure that having a large number of iterations does not meaningfully impact query performance. 
 
 If Druid uses the default credentials validator (i.e., `credentialsValidator.type=metadata`), changing the `credentialIterations` value affects the number of hashing iterations only for users created after the change or for users who subsequently update their passwords via the `/druid-ext/basic-security/authentication/db/basic/users/{userName}/credentials` endpoint. If Druid uses the `ldap` validator, the change applies to any user at next log in (as well as to new users or users who update their passwords).
 
@@ -468,23 +462,23 @@ To use these APIs, a user needs read/write permissions for the CONFIG resource t
 
 Root path: `/druid-ext/basic-security/authentication`
 
-Each API endpoint includes {authenticatorName}, specifying which Authenticator instance is being configured.
+Each API endpoint includes \{authenticatorName}, specifying which Authenticator instance is being configured.
 
 ##### User/Credential Management
 `GET(/druid-ext/basic-security/authentication/db/{authenticatorName}/users)`<br />
 Return a list of all user names.
 
 `GET(/druid-ext/basic-security/authentication/db/{authenticatorName}/users/{userName})`<br />
-Return the name and credentials information of the user with name {userName}
+Return the name and credentials information of the user with name \{userName}
 
 `POST(/druid-ext/basic-security/authentication/db/{authenticatorName}/users/{userName})`<br />
-Create a new user with name {userName}
+Create a new user with name \{userName}
 
 `DELETE(/druid-ext/basic-security/authentication/db/{authenticatorName}/users/{userName})`<br />
-Delete the user with name {userName}
+Delete the user with name \{userName}
 
 `POST(/druid-ext/basic-security/authentication/db/{authenticatorName}/users/{userName}/credentials)`<br />
-Assign a password used for HTTP basic authentication for {userName}
+Assign a password used for HTTP basic authentication for \{userName}
 Content: JSON password request object
 
 Example request body:
@@ -503,14 +497,14 @@ Return the current load status of the local caches of the authentication Druid m
 
 Root path: `/druid-ext/basic-security/authorization`<br />
 
-Each API endpoint includes {authorizerName}, specifying which Authorizer instance is being configured.
+Each API endpoint includes \{authorizerName}, specifying which Authorizer instance is being configured.
 
 ##### User Creation/Deletion
 `GET(/druid-ext/basic-security/authorization/db/{authorizerName}/users)`<br />
 Return a list of all user names.
 
 `GET(/druid-ext/basic-security/authorization/db/{authorizerName}/users/{userName})`<br />
-Return the name and role information of the user with name {userName}
+Return the name and role information of the user with name \{userName}
 
 Example output:
 
@@ -597,20 +591,20 @@ The `resourceNamePattern` is a compiled version of the resource name regex. It i
 ```
 
 `POST(/druid-ext/basic-security/authorization/db/{authorizerName}/users/{userName})`<br />
-Create a new user with name {userName}
+Create a new user with name \{userName}
 
 `DELETE(/druid-ext/basic-security/authorization/db/{authorizerName}/users/{userName})`<br />
-Delete the user with name {userName}
+Delete the user with name \{userName}
 
 ##### Group mapping Creation/Deletion
 `GET(/druid-ext/basic-security/authorization/db/{authorizerName}/groupMappings)`<br />
 Return a list of all group mappings.
 
 `GET(/druid-ext/basic-security/authorization/db/{authorizerName}/groupMappings/{groupMappingName})`<br />
-Return the group mapping and role information of the group mapping with name {groupMappingName}
+Return the group mapping and role information of the group mapping with name \{groupMappingName}
 
 `POST(/druid-ext/basic-security/authorization/db/{authorizerName}/groupMappings/{groupMappingName})`<br />
-Create a new group mapping with name {groupMappingName}
+Create a new group mapping with name \{groupMappingName}
 Content: JSON group mapping object
 Example request body:
 
@@ -625,14 +619,14 @@ Example request body:
 ```
 
 `DELETE(/druid-ext/basic-security/authorization/db/{authorizerName}/groupMappings/{groupMappingName})`<br />
-Delete the group mapping with name {groupMappingName}
+Delete the group mapping with name \{groupMappingName}
 
 #### Role Creation/Deletion
 `GET(/druid-ext/basic-security/authorization/db/{authorizerName}/roles)`<br />
 Return a list of all role names.
 
 `GET(/druid-ext/basic-security/authorization/db/{authorizerName}/roles/{roleName})`<br />
-Return name and permissions for the role named {roleName}.
+Return name and permissions for the role named \{roleName}.
 
 Example output:
 
@@ -686,30 +680,30 @@ Example output:
 
 
 `POST(/druid-ext/basic-security/authorization/db/{authorizerName}/roles/{roleName})`<br />
-Create a new role with name {roleName}.
+Create a new role with name \{roleName}.
 Content: username string
 
 `DELETE(/druid-ext/basic-security/authorization/db/{authorizerName}/roles/{roleName})`<br />
-Delete the role with name {roleName}.
+Delete the role with name \{roleName}.
 
 
 #### Role Assignment
 `POST(/druid-ext/basic-security/authorization/db/{authorizerName}/users/{userName}/roles/{roleName})`<br />
-Assign role {roleName} to user {userName}.
+Assign role \{roleName} to user \{userName}.
 
 `DELETE(/druid-ext/basic-security/authorization/db/{authorizerName}/users/{userName}/roles/{roleName})`<br />
-Unassign role {roleName} from user {userName}
+Unassign role \{roleName} from user \{userName}
 
 `POST(/druid-ext/basic-security/authorization/db/{authorizerName}/groupMappings/{groupMappingName}/roles/{roleName})`<br />
-Assign role {roleName} to group mapping {groupMappingName}.
+Assign role \{roleName} to group mapping \{groupMappingName}.
 
 `DELETE(/druid-ext/basic-security/authorization/db/{authorizerName}/groupMappings/{groupMappingName}/roles/{roleName})`<br />
-Unassign role {roleName} from group mapping {groupMappingName}
+Unassign role \{roleName} from group mapping \{groupMappingName}
 
 
 #### Permissions
 `POST(/druid-ext/basic-security/authorization/db/{authorizerName}/roles/{roleName}/permissions)`<br />
-Set the permissions of {roleName}. This replaces the previous set of permissions on the role.
+Set the permissions of \{roleName}. This replaces the previous set of permissions on the role.
 
 Content: List of JSON Resource-Action objects, e.g.:
 

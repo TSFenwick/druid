@@ -44,7 +44,7 @@ Retrieves the current Coordinator dynamic configuration. Returns a JSON object w
 
 #### URL
 
-<code class="getAPI">GET</code> <code>/druid/coordinator/v1/config</code>
+`GET` `/druid/coordinator/v1/config`
 
 #### Responses
 
@@ -86,13 +86,11 @@ Host: http://ROUTER_IP:ROUTER_PORT
 #### Sample response
 
 <details>
-<summary>Click to show sample response</summary>
+<summary>View the response</summary>
 
 ```json
 {
     "millisToWaitBeforeDeleting": 900000,
-    "mergeBytesLimit": 524288000,
-    "mergeSegmentsLimit": 100,
     "maxSegmentsToMove": 100,
     "replicantLifetime": 15,
     "replicationThrottleLimit": 500,
@@ -107,7 +105,10 @@ Host: http://ROUTER_IP:ROUTER_PORT
     "maxNonPrimaryReplicantsToLoad": 2147483647,
     "useRoundRobinSegmentAssignment": true,
     "smartSegmentLoading": true,
-    "debugDimensions": null
+    "debugDimensions": null,
+    "turboLoadingNodes": [],
+    "cloneServers": {}
+
 }
 ```
 
@@ -120,7 +121,7 @@ For information on the supported properties, see [Dynamic configuration](../conf
 
 #### URL
 
-<code class="postAPI">POST</code> <code>/druid/coordinator/v1/config</code>
+`POST` `/druid/coordinator/v1/config`
 
 #### Header parameters
 
@@ -159,8 +160,6 @@ curl "http://ROUTER_IP:ROUTER_PORT/druid/coordinator/v1/config" \
 --header 'Content-Type: application/json' \
 --data '{
   "millisToWaitBeforeDeleting": 900000,
-  "mergeBytesLimit": 524288000,
-  "mergeSegmentsLimit": 100,
   "maxSegmentsToMove": 5,
   "percentOfSegmentsToConsiderPerMove": 100,
   "useBatchedSegmentSampler": true,
@@ -176,7 +175,9 @@ curl "http://ROUTER_IP:ROUTER_PORT/druid/coordinator/v1/config" \
   "pauseCoordination": false,
   "replicateAfterLoadTimeout": false,
   "maxNonPrimaryReplicantsToLoad": 2147483647,
-  "useRoundRobinSegmentAssignment": true
+  "useRoundRobinSegmentAssignment": true,
+  "turboLoadingNodes": [],
+  "cloneServers": {}
 }'
 ```
 
@@ -192,8 +193,6 @@ Content-Length: 683
 
 {
   "millisToWaitBeforeDeleting": 900000,
-  "mergeBytesLimit": 524288000,
-  "mergeSegmentsLimit": 100,
   "maxSegmentsToMove": 5,
   "percentOfSegmentsToConsiderPerMove": 100,
   "useBatchedSegmentSampler": true,
@@ -209,7 +208,9 @@ Content-Length: 683
   "pauseCoordination": false,
   "replicateAfterLoadTimeout": false,
   "maxNonPrimaryReplicantsToLoad": 2147483647,
-  "useRoundRobinSegmentAssignment": true
+  "useRoundRobinSegmentAssignment": true,
+  "turboLoadingNodes": [],
+  "cloneServers": {}
 }
 ```
 
@@ -226,7 +227,7 @@ Retrieves the history of changes to Coordinator dynamic configuration over an in
 
 #### URL
 
-<code class="getAPI">GET</code> <code>/druid/coordinator/v1/config/history</code>
+`GET` `/druid/coordinator/v1/config/history`
 
 #### Query parameters
 
@@ -283,7 +284,7 @@ Host: http://ROUTER_IP:ROUTER_PORT
 #### Sample response
 
 <details>
-  <summary>Click to show sample response</summary>
+  <summary>View the response</summary>
 
 ```json
 [
@@ -295,7 +296,7 @@ Host: http://ROUTER_IP:ROUTER_PORT
             "comment": "",
             "ip": "127.0.0.1"
         },
-        "payload": "{\"millisToWaitBeforeDeleting\":900000,\"mergeBytesLimit\":524288000,\"mergeSegmentsLimit\":100,\"maxSegmentsToMove\":5,\"replicantLifetime\":15,\"replicationThrottleLimit\":10,\"balancerComputeThreads\":1,\"killDataSourceWhitelist\":[],\"killPendingSegmentsSkipList\":[],\"maxSegmentsInNodeLoadingQueue\":100,\"decommissioningNodes\":[],\"decommissioningMaxPercentOfMaxSegmentsToMove\":70,\"pauseCoordination\":false,\"replicateAfterLoadTimeout\":false,\"maxNonPrimaryReplicantsToLoad\":2147483647,\"useRoundRobinSegmentAssignment\":true,\"smartSegmentLoading\":true,\"debugDimensions\":null}",
+        "payload": "{\"millisToWaitBeforeDeleting\":900000,\"maxSegmentsToMove\":5,\"replicantLifetime\":15,\"replicationThrottleLimit\":10,\"balancerComputeThreads\":1,\"killDataSourceWhitelist\":[],\"killPendingSegmentsSkipList\":[],\"maxSegmentsInNodeLoadingQueue\":100,\"decommissioningNodes\":[],\"decommissioningMaxPercentOfMaxSegmentsToMove\":70,\"pauseCoordination\":false,\"replicateAfterLoadTimeout\":false,\"maxNonPrimaryReplicantsToLoad\":2147483647,\"useRoundRobinSegmentAssignment\":true,\"smartSegmentLoading\":true,\"debugDimensions\":null,\"decommissioningNodes\":[]}",
         "auditTime": "2023-10-03T20:59:51.622Z"
     }
 ]
@@ -315,7 +316,7 @@ Returns an empty response body if there is no current Overlord dynamic configura
 
 #### URL
 
-<code class="getAPI">GET</code> <code>/druid/indexer/v1/worker</code>
+`GET` `/druid/indexer/v1/worker`
 
 #### Responses
 
@@ -355,7 +356,7 @@ Host: http://ROUTER_IP:ROUTER_PORT
 #### Sample response
 
 <details>
-  <summary>Click to show sample response</summary>
+  <summary>View the response</summary>
 
 ```json
 {
@@ -380,7 +381,7 @@ For information on the supported properties, see [Overlord dynamic configuration
 
 #### URL
 
-<code class="postAPI">POST</code><code>/druid/indexer/v1/worker</code>
+`POST` `/druid/indexer/v1/worker`
 
 #### Header parameters
 
@@ -466,8 +467,7 @@ Retrieves the history of changes to Overlord dynamic configuration over an inter
 
 #### URL
 
-<code class="getAPI">GET</code> <code>/druid/indexer/v1/worker/history</code>
-
+`GET` `/druid/indexer/v1/worker/history`
 
 #### Query parameters
 
@@ -523,7 +523,7 @@ Host: http://ROUTER_IP:ROUTER_PORT
 #### Sample response
 
 <details>
-  <summary>Click to show sample response</summary>
+  <summary>View the response</summary>
 
 ```json
 [
@@ -547,7 +547,7 @@ Host: http://ROUTER_IP:ROUTER_PORT
 
 Returns an array of all the worker nodes in the cluster along with its corresponding metadata.
 
-<code class="getAPI">GET</code><code>/druid/indexer/v1/workers</code>
+`GET` `/druid/indexer/v1/workers`
 
 #### Responses
 
@@ -589,7 +589,7 @@ Host: http://ROUTER_IP:ROUTER_PORT
 #### Sample response
 
 <details>
-  <summary>Click to show sample response</summary>
+  <summary>View the response</summary>
 
 ```json
 [
@@ -621,7 +621,7 @@ Returns an empty response body if there are no Overlord scaling events.
 
 #### URL
 
-<code class="getAPI">GET</code><code>/druid/indexer/v1/scaling</code>
+`GET` `/druid/indexer/v1/scaling`
 
 #### Responses
 

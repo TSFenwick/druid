@@ -20,13 +20,16 @@
 package org.apache.druid.query.expression;
 
 import com.google.inject.Inject;
-import org.apache.druid.common.config.NullHandling;
-import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.math.expr.Evals;
 import org.apache.druid.math.expr.Expr;
 import org.apache.druid.math.expr.ExprEval;
 import org.apache.druid.math.expr.ExprMacroTable;
 import org.apache.druid.math.expr.ExpressionType;
+import org.apache.druid.math.expr.vector.CastToTypeVectorProcessor;
+import org.apache.druid.math.expr.vector.ExprEvalObjectVector;
+import org.apache.druid.math.expr.vector.ExprEvalVector;
+import org.apache.druid.math.expr.vector.ExprVectorProcessor;
+import org.apache.druid.math.expr.vector.UnivariateObjectFunctionVectorProcessor;
 import org.apache.druid.query.cache.CacheKeyBuilder;
 import org.apache.druid.query.lookup.LookupExtractorFactoryContainerProvider;
 import org.apache.druid.query.lookup.RegisteredLookupExtractionFn;
@@ -74,28 +77,22 @@ public class LookupExprMacro implements ExprMacroTable.ExprMacro
         replaceMissingValueWith != null && replaceMissingValueWith.isLiteral()
         ? Evals.asString(replaceMissingValueWith.getLiteralValue())
         : null,
-        false,
+        null,
         null
     );
 
-    class LookupExpr extends ExprMacroTable.BaseScalarUnivariateMacroFunctionExpr
+    class LookupExpr extends ExprMacroTable.BaseScalarMacroFunctionExpr
     {
-      private LookupExpr(Expr arg)
+      private LookupExpr(final List<Expr> args)
       {
-        super(FN_NAME, arg);
+        super(LookupExprMacro.this, args);
       }
 
       @Nonnull
       @Override
       public ExprEval eval(final ObjectBinding bindings)
       {
-        return ExprEval.of(extractionFn.apply(NullHandling.emptyToNullIfNeeded(arg.eval(bindings).asString())));
-      }
-
-      @Override
-      public Expr visit(Shuttle shuttle)
-      {
-        return shuttle.visit(apply(shuttle.visitAll(args)));
+        return ExprEval.ofString(extractionFn.apply(arg.eval(bindings).asString()));
       }
 
       @Nullable
@@ -104,20 +101,45 @@ public class LookupExprMacro implements ExprMacroTable.ExprMacro
       {
         return ExpressionType.STRING;
       }
+      @Override
+      public boolean canVectorize(InputBindingInspector inspector)
+      {
+        return true;
+      }
 
       @Override
-      public String stringify()
+      public <T> ExprVectorProcessor<T> asVectorProcessor(VectorInputBindingInspector inspector)
       {
-        if (replaceMissingValueWith != null) {
-          return StringUtils.format(
-              "%s(%s, %s, %s)",
-              FN_NAME,
-              arg.stringify(),
-              lookupExpr.stringify(),
-              replaceMissingValueWith.stringify()
-          );
-        }
-        return StringUtils.format("%s(%s, %s)", FN_NAME, arg.stringify(), lookupExpr.stringify());
+        final Object[] outputs = new Object[inspector.getMaxVectorSize()];
+        final ExprVectorProcessor<Object[]> processor =
+            new UnivariateObjectFunctionVectorProcessor<Object[], Object[]>(
+                CastToTypeVectorProcessor.cast(arg.asVectorProcessor(inspector), ExpressionType.STRING),
+                outputs
+            )
+            {
+              @Override
+              public ExpressionType getOutputType()
+              {
+                return ExpressionType.STRING;
+              }
+              @Override
+              public int maxVectorSize()
+              {
+                return inspector.getMaxVectorSize();
+              }
+              @Override
+              public void processIndex(Object[] input, Object[] output, boolean[] outputNulls, int i)
+              {
+                final String extracted = extractionFn.apply(input[i]);
+                outputs[i] = extracted;
+              }
+              @Override
+              public ExprEvalVector asEval()
+              {
+                return new ExprEvalObjectVector(outputs, ExpressionType.STRING);
+              }
+            };
+        return (ExprVectorProcessor<T>) processor;
       }
 
       @Override
@@ -127,7 +149,7 @@ public class LookupExprMacro implements ExprMacroTable.ExprMacro
       }
     }
 
-    return new LookupExpr(arg);
+    return new LookupExpr(args);
   }
 
   private Expr getReplaceMissingValueWith(final List<Expr> args)

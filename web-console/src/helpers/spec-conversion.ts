@@ -25,22 +25,30 @@ import {
   SqlExpression,
   SqlType,
   T,
-} from '@druid-toolkit/query';
+} from 'druid-query-toolkit';
 import * as JSONBig from 'json-bigint-native';
 
 import type {
   DimensionSpec,
   IngestionSpec,
   MetricSpec,
+  QueryContext,
   QueryWithContext,
   TimestampSpec,
   Transform,
 } from '../druid-models';
-import { inflateDimensionSpec, NO_SUCH_COLUMN, TIME_COLUMN, upgradeSpec } from '../druid-models';
+import {
+  DEFAULT_ARRAY_INGEST_MODE,
+  getArrayIngestMode,
+  inflateDimensionSpec,
+  NO_SUCH_COLUMN,
+  TIME_COLUMN,
+  upgradeSpec,
+} from '../druid-models';
 import { deepGet, filterMap, nonEmptyArray, oneOf } from '../utils';
 
-export function getSpecDatasourceName(spec: Partial<IngestionSpec>): string {
-  return deepGet(spec, 'spec.dataSchema.dataSource') || 'unknown_datasource';
+export function getSpecDatasourceName(spec: Partial<IngestionSpec>): string | undefined {
+  return deepGet(spec, 'spec.dataSchema.dataSource');
 }
 
 function convertFilter(filter: any): SqlExpression {
@@ -73,18 +81,34 @@ export function convertSpecToSql(spec: any): QueryWithContext {
   }
   spec = upgradeSpec(spec, true);
 
-  const context: Record<string, any> = {
-    finalizeAggregations: false,
-    groupByEnableMultiValueUnnesting: false,
-    arrayIngestMode: 'array',
-  };
+  const context: QueryContext = {};
 
   const indexSpec = deepGet(spec, 'spec.tuningConfig.indexSpec');
   if (indexSpec) {
     context.indexSpec = indexSpec;
   }
 
-  const lines: string[] = [];
+  const lines: string[] = [`-- This SQL query was auto generated from an ingestion spec`];
+
+  lines.push(`SET arrayIngestMode = ${L(getArrayIngestMode(spec, DEFAULT_ARRAY_INGEST_MODE))};`);
+
+  const forceSegmentSortByTime = deepGet(
+    spec,
+    'spec.dataSchema.dimensionsSpec.forceSegmentSortByTime',
+  );
+  if (typeof forceSegmentSortByTime !== 'undefined') {
+    lines.push(`SET forceSegmentSortByTime = ${L(forceSegmentSortByTime)};`);
+  }
+
+  const maxNumConcurrentSubTasks = deepGet(spec, 'spec.tuningConfig.maxNumConcurrentSubTasks');
+  if (maxNumConcurrentSubTasks > 1) {
+    lines.push(`SET maxNumTasks = ${maxNumConcurrentSubTasks + 1};`);
+  }
+
+  const maxParseExceptions = deepGet(spec, 'spec.tuningConfig.maxParseExceptions');
+  if (typeof maxParseExceptions === 'number') {
+    lines.push(`SET maxParseExceptions = ${maxParseExceptions};`);
+  }
 
   const rollup = deepGet(spec, 'spec.dataSchema.granularitySpec.rollup') ?? true;
 
@@ -197,17 +221,7 @@ export function convertSpecToSql(spec: any): QueryWithContext {
     );
   }
 
-  lines.push(`-- This SQL query was auto generated from an ingestion spec`);
-
-  const maxNumConcurrentSubTasks = deepGet(spec, 'spec.tuningConfig.maxNumConcurrentSubTasks');
-  if (maxNumConcurrentSubTasks > 1) {
-    context.maxNumTasks = maxNumConcurrentSubTasks + 1;
-  }
-
-  const maxParseExceptions = deepGet(spec, 'spec.tuningConfig.maxParseExceptions');
-  if (typeof maxParseExceptions === 'number') {
-    context.maxParseExceptions = maxParseExceptions;
-  }
+  lines.push(`SET finalizeAggregations = FALSE;`, `SET groupByEnableMultiValueUnnesting = FALSE;`);
 
   const dataSource = deepGet(spec, 'spec.dataSchema.dataSource');
   if (typeof dataSource !== 'string') throw new Error(`spec.dataSchema.dataSource is not a string`);

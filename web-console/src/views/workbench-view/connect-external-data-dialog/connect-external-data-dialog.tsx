@@ -17,10 +17,15 @@
  */
 
 import { Classes, Dialog } from '@blueprintjs/core';
-import type { SqlExpression } from '@druid-toolkit/query';
+import type { SqlExpression } from 'druid-query-toolkit';
 import React, { useState } from 'react';
 
-import type { ArrayMode, ExternalConfig, InputFormat, InputSource } from '../../../druid-models';
+import type {
+  ArrayIngestMode,
+  ExternalConfig,
+  InputFormat,
+  InputSource,
+} from '../../../druid-models';
 import { InputFormatStep } from '../input-format-step/input-format-step';
 import { InputSourceStep } from '../input-source-step/input-source-step';
 
@@ -32,7 +37,7 @@ export interface ConnectExternalDataDialogProps {
     config: ExternalConfig,
     timeExpression: SqlExpression | undefined,
     partitionedByHint: string | undefined,
-    arrayMode: ArrayMode,
+    arrayMode: ArrayIngestMode,
   ): void;
   onClose(): void;
 }
@@ -64,10 +69,10 @@ export const ConnectExternalDataDialog = React.memo(function ConnectExternalData
       <div className={Classes.DIALOG_BODY}>
         {inputFormat && inputSource ? (
           <InputFormatStep
-            inputSource={inputSource}
+            initInputSource={inputSource}
             initInputFormat={inputFormat}
             doneButton
-            onSet={({ inputFormat, signature, timeExpression, arrayMode }) => {
+            onSet={({ inputSource, inputFormat, signature, timeExpression, arrayMode }) => {
               onSetExternalConfig(
                 { inputSource, inputFormat, signature },
                 timeExpression,
@@ -83,7 +88,6 @@ export const ConnectExternalDataDialog = React.memo(function ConnectExternalData
         ) : (
           <InputSourceStep
             initInputSource={inputSource}
-            mode="sampler"
             onSet={(inputSource, inputFormat, partitionedByHint) => {
               setExternalConfigStep({ inputSource, inputFormat, partitionedByHint });
             }}

@@ -25,11 +25,11 @@ import com.google.common.collect.Lists;
 import org.apache.calcite.avatica.ColumnMetaData;
 import org.apache.calcite.avatica.Meta;
 import org.apache.calcite.avatica.remote.TypedValue;
-import org.apache.druid.common.config.NullHandling;
 import org.apache.druid.java.util.common.DateTimes;
 import org.apache.druid.java.util.common.io.Closer;
 import org.apache.druid.math.expr.ExprMacroTable;
 import org.apache.druid.query.QueryRunnerFactoryConglomerate;
+import org.apache.druid.query.policy.NoopPolicyEnforcer;
 import org.apache.druid.segment.join.JoinableFactoryWrapper;
 import org.apache.druid.server.QueryStackTests;
 import org.apache.druid.server.SpecificSegmentsQuerySegmentWalker;
@@ -47,17 +47,17 @@ import org.apache.druid.sql.calcite.planner.PlannerFactory;
 import org.apache.druid.sql.calcite.schema.DruidSchemaCatalog;
 import org.apache.druid.sql.calcite.util.CalciteTestBase;
 import org.apache.druid.sql.calcite.util.CalciteTests;
-import org.apache.druid.sql.calcite.util.QueryLogHook;
-import org.junit.After;
-import org.junit.AfterClass;
+import org.apache.druid.sql.calcite.util.QueryFrameworkUtils;
+import org.apache.druid.sql.hook.DruidHookDispatcher;
 import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
@@ -73,26 +73,20 @@ public class DruidStatementTest extends CalciteTestBase
   private static String SELECT_STAR_FROM_FOO =
       "SELECT * FROM druid.foo";
 
-  @ClassRule
-  public static TemporaryFolder temporaryFolder = new TemporaryFolder();
-
-  @Rule
-  public QueryLogHook queryLogHook = QueryLogHook.create();
-
   private static SpecificSegmentsQuerySegmentWalker walker;
   private static QueryRunnerFactoryConglomerate conglomerate;
   private static Closer resourceCloser;
 
-  @BeforeClass
-  public static void setUpClass() throws Exception
+  @BeforeAll
+  public static void setUpClass(@TempDir File tempDir)
   {
     resourceCloser = Closer.create();
     conglomerate = QueryStackTests.createQueryRunnerFactoryConglomerate(resourceCloser);
-    walker = CalciteTests.createMockWalker(conglomerate, temporaryFolder.newFolder());
+    walker = CalciteTests.createMockWalker(conglomerate, tempDir);
     resourceCloser.register(walker);
   }
 
-  @AfterClass
+  @AfterAll
   public static void tearDownClass() throws IOException
   {
     resourceCloser.close();
@@ -100,7 +94,7 @@ public class DruidStatementTest extends CalciteTestBase
 
   private SqlStatementFactory sqlStatementFactory;
 
-  @Before
+  @BeforeEach
   public void setUp()
   {
     final PlannerConfig plannerConfig = new PlannerConfig();
@@ -120,15 +114,17 @@ public class DruidStatementTest extends CalciteTestBase
         new CalciteRulesManager(ImmutableSet.of()),
         joinableFactoryWrapper,
         CatalogResolver.NULL_RESOLVER,
-        new AuthConfig()
+        new AuthConfig(),
+        NoopPolicyEnforcer.instance(),
+        new DruidHookDispatcher()
     );
-    this.sqlStatementFactory = CalciteTests.createSqlStatementFactory(
+    this.sqlStatementFactory = QueryFrameworkUtils.createSqlStatementFactory(
         CalciteTests.createMockSqlEngine(walker, conglomerate),
         plannerFactory
     );
   }
 
-  @After
+  @AfterEach
   public void tearDown()
   {
 
@@ -148,6 +144,7 @@ public class DruidStatementTest extends CalciteTestBase
         "",
         0,
         Collections.emptyMap(),
+        Collections.emptyMap(),
         sqlStatementFactory,
         new ResultFetcherFactory(AvaticaServerConfig.DEFAULT_FETCH_TIMEOUT_MS)
     );
@@ -156,12 +153,11 @@ public class DruidStatementTest extends CalciteTestBase
   @Test
   public void testSubQueryWithOrderByDirect()
   {
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        SUB_QUERY_WITH_ORDER_BY,
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql(SUB_QUERY_WITH_ORDER_BY)
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     try (final DruidJdbcStatement statement = jdbcStatement()) {
       // First frame, ask for all rows.
       statement.execute(queryPlus, -1);
@@ -177,12 +173,11 @@ public class DruidStatementTest extends CalciteTestBase
   @Test
   public void testFetchPastEOFDirect()
   {
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        SUB_QUERY_WITH_ORDER_BY,
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql(SUB_QUERY_WITH_ORDER_BY)
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     try (final DruidJdbcStatement statement = jdbcStatement()) {
       // First frame, ask for all rows.
       statement.execute(queryPlus, -1);
@@ -225,12 +220,11 @@ public class DruidStatementTest extends CalciteTestBase
   @Test
   public void testFetchAfterResultCloseDirect()
   {
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        SUB_QUERY_WITH_ORDER_BY,
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql(SUB_QUERY_WITH_ORDER_BY)
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     try (final DruidJdbcStatement statement = jdbcStatement()) {
       // First frame, ask for all rows.
       statement.execute(queryPlus, -1);
@@ -247,12 +241,11 @@ public class DruidStatementTest extends CalciteTestBase
   @Test
   public void testSubQueryWithOrderByDirectTwice()
   {
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        SUB_QUERY_WITH_ORDER_BY,
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql(SUB_QUERY_WITH_ORDER_BY)
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     try (final DruidJdbcStatement statement = jdbcStatement()) {
       statement.execute(queryPlus, -1);
       Meta.Frame frame = statement.nextFrame(AbstractDruidJdbcStatement.START_OFFSET, 6);
@@ -292,12 +285,11 @@ public class DruidStatementTest extends CalciteTestBase
   @Test
   public void testSelectAllInFirstFrameDirect()
   {
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        SELECT_FROM_FOO,
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql(SELECT_FROM_FOO)
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     try (final DruidJdbcStatement statement = jdbcStatement()) {
       // First frame, ask for all rows.
       statement.execute(queryPlus, -1);
@@ -312,13 +304,13 @@ public class DruidStatementTest extends CalciteTestBase
                       DateTimes.of("2000-01-02").getMillis(),
                       1L,
                       "10.1",
-                      NullHandling.defaultStringValue(),
+                      null,
                       2.0f
                   },
                   new Object[]{DateTimes.of("2000-01-03").getMillis(), 1L, "2", "", 3.0f},
                   new Object[]{DateTimes.of("2001-01-01").getMillis(), 1L, "1", "a", 4.0f},
                   new Object[]{DateTimes.of("2001-01-02").getMillis(), 1L, "def", "abc", 5.0f},
-                  new Object[]{DateTimes.of("2001-01-03").getMillis(), 1L, "abc", NullHandling.defaultStringValue(), 6.0f}
+                  new Object[]{DateTimes.of("2001-01-03").getMillis(), 1L, "abc", null, 6.0f}
               )
           ),
           frame
@@ -334,12 +326,11 @@ public class DruidStatementTest extends CalciteTestBase
   @Test
   public void testSelectSplitOverTwoFramesDirect()
   {
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        SELECT_FROM_FOO,
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql(SELECT_FROM_FOO)
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     try (final DruidJdbcStatement statement = jdbcStatement()) {
 
       // First frame, ask for 2 rows.
@@ -371,12 +362,11 @@ public class DruidStatementTest extends CalciteTestBase
   @Test
   public void testTwoFramesAutoCloseDirect()
   {
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        SELECT_FROM_FOO,
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql(SELECT_FROM_FOO)
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     try (final DruidJdbcStatement statement = jdbcStatement()) {
       // First frame, ask for 2 rows.
       statement.execute(queryPlus, -1);
@@ -413,12 +403,11 @@ public class DruidStatementTest extends CalciteTestBase
   @Test
   public void testTwoFramesCloseWithResultSetDirect()
   {
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        SELECT_FROM_FOO,
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql(SELECT_FROM_FOO)
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     try (final DruidJdbcStatement statement = jdbcStatement()) {
       // First frame, ask for 2 rows.
       statement.execute(queryPlus, -1);
@@ -444,7 +433,7 @@ public class DruidStatementTest extends CalciteTestBase
                 DateTimes.of("2000-01-02").getMillis(),
                 1L,
                 "10.1",
-                NullHandling.defaultStringValue(),
+                null,
                 2.0f
             }
         )
@@ -460,7 +449,7 @@ public class DruidStatementTest extends CalciteTestBase
             new Object[]{DateTimes.of("2000-01-03").getMillis(), 1L, "2", "", 3.0f},
             new Object[]{DateTimes.of("2001-01-01").getMillis(), 1L, "1", "a", 4.0f},
             new Object[]{DateTimes.of("2001-01-02").getMillis(), 1L, "def", "abc", 5.0f},
-            new Object[]{DateTimes.of("2001-01-03").getMillis(), 1L, "abc", NullHandling.defaultStringValue(), 6.0f}
+            new Object[]{DateTimes.of("2001-01-03").getMillis(), 1L, "abc", null, 6.0f}
         )
     );
   }
@@ -468,12 +457,11 @@ public class DruidStatementTest extends CalciteTestBase
   @Test
   public void testSignatureDirect()
   {
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        SELECT_STAR_FROM_FOO,
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql(SELECT_STAR_FROM_FOO)
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     try (final DruidJdbcStatement statement = jdbcStatement()) {
       // Check signature.
       statement.execute(queryPlus, -1);
@@ -537,12 +525,11 @@ public class DruidStatementTest extends CalciteTestBase
   public void testSubQueryWithOrderByPrepared()
   {
     final String sql = "select T20.F13 as F22  from (SELECT DISTINCT dim1 as F13 FROM druid.foo T10) T20 order by T20.F13 ASC";
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        sql,
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql(sql)
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     try (final DruidJdbcPreparedStatement statement = jdbcPreparedStatement(queryPlus)) {
       statement.prepare();
       // First frame, ask for all rows.
@@ -560,12 +547,11 @@ public class DruidStatementTest extends CalciteTestBase
   public void testSubQueryWithOrderByPreparedTwice()
   {
     final String sql = "select T20.F13 as F22  from (SELECT DISTINCT dim1 as F13 FROM druid.foo T10) T20 order by T20.F13 ASC";
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        sql,
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql(sql)
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     try (final DruidJdbcPreparedStatement statement = jdbcPreparedStatement(queryPlus)) {
       statement.prepare();
       statement.execute(Collections.emptyList());
@@ -590,12 +576,11 @@ public class DruidStatementTest extends CalciteTestBase
   @Test
   public void testSignaturePrepared()
   {
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        SELECT_STAR_FROM_FOO,
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql(SELECT_STAR_FROM_FOO)
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     try (final DruidJdbcPreparedStatement statement = jdbcPreparedStatement(queryPlus)) {
       statement.prepare();
       verifySignature(statement.getSignature());
@@ -605,12 +590,11 @@ public class DruidStatementTest extends CalciteTestBase
   @Test
   public void testParameters()
   {
-    SqlQueryPlus queryPlus = new SqlQueryPlus(
-        "SELECT COUNT(*) AS cnt FROM sys.servers WHERE servers.host = ?",
-        null,
-        null,
-        AllowAllAuthenticator.ALLOW_ALL_RESULT
-    );
+    SqlQueryPlus queryPlus =
+        SqlQueryPlus.builder()
+                    .sql("SELECT COUNT(*) AS cnt FROM sys.servers WHERE servers.host = ?")
+                    .auth(AllowAllAuthenticator.ALLOW_ALL_RESULT)
+                    .buildJdbc();
     Meta.Frame expected = Meta.Frame.create(0, true, Collections.singletonList(new Object[] {1L}));
     List<TypedValue> matchingParams = Collections.singletonList(TypedValue.ofLocal(ColumnMetaData.Rep.STRING, "dummy"));
     try (final DruidJdbcPreparedStatement statement = jdbcPreparedStatement(queryPlus)) {

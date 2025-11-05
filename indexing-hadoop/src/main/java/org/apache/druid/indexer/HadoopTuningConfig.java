@@ -23,8 +23,8 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonTypeName;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import org.apache.druid.common.config.Configs;
 import org.apache.druid.indexer.partitions.DimensionBasedPartitionsSpec;
 import org.apache.druid.indexer.partitions.HashedPartitionsSpec;
 import org.apache.druid.java.util.common.DateTimes;
@@ -33,6 +33,7 @@ import org.apache.druid.segment.incremental.AppendableIndexSpec;
 import org.apache.druid.segment.indexing.TuningConfig;
 
 import javax.annotation.Nullable;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -45,7 +46,6 @@ public class HadoopTuningConfig implements TuningConfig
 
   private static final DimensionBasedPartitionsSpec DEFAULT_PARTITIONS_SPEC = HashedPartitionsSpec.defaultSpec();
   private static final Map<Long, List<HadoopyShardSpec>> DEFAULT_SHARD_SPECS = ImmutableMap.of();
-  private static final IndexSpec DEFAULT_INDEX_SPEC = IndexSpec.DEFAULT;
   private static final boolean DEFAULT_USE_COMBINER = false;
   private static final int DEFAULT_NUM_BACKGROUND_PERSIST_THREADS = 0;
 
@@ -56,8 +56,8 @@ public class HadoopTuningConfig implements TuningConfig
         DateTimes.nowUtc().toString(),
         DEFAULT_PARTITIONS_SPEC,
         DEFAULT_SHARD_SPECS,
-        DEFAULT_INDEX_SPEC,
-        DEFAULT_INDEX_SPEC,
+        IndexSpec.getDefault(),
+        IndexSpec.getDefault(),
         DEFAULT_APPENDABLE_INDEX,
         DEFAULT_MAX_ROWS_IN_MEMORY_BATCH,
         0L,
@@ -147,48 +147,46 @@ public class HadoopTuningConfig implements TuningConfig
   )
   {
     this.workingPath = workingPath;
-    this.version = version == null ? DateTimes.nowUtc().toString() : version;
-    this.partitionsSpec = partitionsSpec == null ? DEFAULT_PARTITIONS_SPEC : partitionsSpec;
-    this.shardSpecs = shardSpecs == null ? DEFAULT_SHARD_SPECS : shardSpecs;
-    this.indexSpec = indexSpec == null ? DEFAULT_INDEX_SPEC : indexSpec;
-    this.indexSpecForIntermediatePersists = indexSpecForIntermediatePersists == null ?
-                                            this.indexSpec : indexSpecForIntermediatePersists;
-    this.maxRowsInMemory = maxRowsInMemory == null ? maxRowsInMemoryCOMPAT == null
-                                                      ? DEFAULT_MAX_ROWS_IN_MEMORY_BATCH
-                                                      : maxRowsInMemoryCOMPAT : maxRowsInMemory;
-    this.appendableIndexSpec = appendableIndexSpec == null ? DEFAULT_APPENDABLE_INDEX : appendableIndexSpec;
+    this.version = Configs.valueOrDefault(version, DateTimes.nowUtc().toString());
+    this.partitionsSpec = Configs.valueOrDefault(partitionsSpec, DEFAULT_PARTITIONS_SPEC);
+    this.shardSpecs = Configs.valueOrDefault(shardSpecs, DEFAULT_SHARD_SPECS);
+    this.indexSpec = Configs.valueOrDefault(indexSpec, IndexSpec.getDefault());
+    this.indexSpecForIntermediatePersists = Configs.valueOrDefault(
+        indexSpecForIntermediatePersists,
+        this.indexSpec
+    );
+    this.maxRowsInMemory = Configs.valueOrDefault(
+        maxRowsInMemory,
+        Configs.valueOrDefault(maxRowsInMemoryCOMPAT, DEFAULT_MAX_ROWS_IN_MEMORY_BATCH)
+    );
+    this.appendableIndexSpec = Configs.valueOrDefault(appendableIndexSpec, DEFAULT_APPENDABLE_INDEX);
     // initializing this to 0, it will be lazily initialized to a value
     // @see #getMaxBytesInMemoryOrDefault()
-    this.maxBytesInMemory = maxBytesInMemory == null ? 0 : maxBytesInMemory;
+    this.maxBytesInMemory = Configs.valueOrDefault(maxBytesInMemory, 0);
     this.leaveIntermediate = leaveIntermediate;
-    this.cleanupOnFailure = cleanupOnFailure == null ? true : cleanupOnFailure;
+    this.cleanupOnFailure = Configs.valueOrDefault(cleanupOnFailure, true);
     this.overwriteFiles = overwriteFiles;
     this.jobProperties = (jobProperties == null
                           ? ImmutableMap.of()
                           : ImmutableMap.copyOf(jobProperties));
     this.combineText = combineText;
-    this.useCombiner = useCombiner == null ? DEFAULT_USE_COMBINER : useCombiner;
-    this.numBackgroundPersistThreads = numBackgroundPersistThreads == null
-                                       ? DEFAULT_NUM_BACKGROUND_PERSIST_THREADS
-                                       : numBackgroundPersistThreads;
+    this.useCombiner = Configs.valueOrDefault(useCombiner, DEFAULT_USE_COMBINER);
+    this.numBackgroundPersistThreads = Configs.valueOrDefault(
+        numBackgroundPersistThreads,
+        DEFAULT_NUM_BACKGROUND_PERSIST_THREADS
+    );
     this.forceExtendableShardSpecs = forceExtendableShardSpecs;
     Preconditions.checkArgument(this.numBackgroundPersistThreads >= 0, "Not support persistBackgroundCount < 0");
     this.useExplicitVersion = useExplicitVersion;
-    this.allowedHadoopPrefix = allowedHadoopPrefix == null ? ImmutableList.of() : allowedHadoopPrefix;
+    this.allowedHadoopPrefix = Configs.valueOrDefault(allowedHadoopPrefix, Collections.emptyList());
 
-    this.ignoreInvalidRows = ignoreInvalidRows == null ? false : ignoreInvalidRows;
-    if (maxParseExceptions != null) {
-      this.maxParseExceptions = maxParseExceptions;
-    } else {
-      if (!this.ignoreInvalidRows) {
-        this.maxParseExceptions = 0;
-      } else {
-        this.maxParseExceptions = TuningConfig.DEFAULT_MAX_PARSE_EXCEPTIONS;
-      }
-    }
-    this.logParseExceptions = logParseExceptions == null ? TuningConfig.DEFAULT_LOG_PARSE_EXCEPTIONS : logParseExceptions;
-
-    this.useYarnRMJobStatusFallback = useYarnRMJobStatusFallback == null ? true : useYarnRMJobStatusFallback;
+    this.ignoreInvalidRows = Configs.valueOrDefault(ignoreInvalidRows, false);
+    this.maxParseExceptions = Configs.valueOrDefault(
+        maxParseExceptions,
+        this.ignoreInvalidRows ? TuningConfig.DEFAULT_MAX_PARSE_EXCEPTIONS : 0
+    );
+    this.logParseExceptions = Configs.valueOrDefault(logParseExceptions, TuningConfig.DEFAULT_LOG_PARSE_EXCEPTIONS);
+    this.useYarnRMJobStatusFallback = Configs.valueOrDefault(useYarnRMJobStatusFallback, true);
 
     if (awaitSegmentAvailabilityTimeoutMillis == null || awaitSegmentAvailabilityTimeoutMillis < 0) {
       this.awaitSegmentAvailabilityTimeoutMillis = DEFAULT_AWAIT_SEGMENT_AVAILABILITY_TIMEOUT_MILLIS;

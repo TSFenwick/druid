@@ -18,9 +18,12 @@
 # global dictionary is at the start, file overrides afterwards
 # one word per line, to define a file override use ' - filename'
 # where filename is relative to this configuration file
+BrowserOnly
+docusaurus
 1M
 100MiB
 32-bit
+4MiB
 500MiB
 64-bit
 ACL
@@ -30,6 +33,9 @@ apache.org
 AvroStorage
 ARN
 ASC
+arcsine
+arccosine
+arctangent
 autokill
 AWS
 AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
@@ -39,6 +45,7 @@ Authorizer
 Avatica
 Avro
 Azul
+AzureDNSZone
 BCP
 Base64
 Base64-encoded
@@ -51,12 +58,16 @@ CORS
 CNF
 CPUs
 CSVs
+CentralizedDatasourceSchema
 Ceph
+circledR
 CloudWatch
 ColumnDescriptor
 Corretto
 CLI
+CUME_DIST
 DDL
+DENSE_RANK
 DML
 DNS
 DRUIDVERSION
@@ -92,7 +103,7 @@ EMRFS
 ETL
 Elasticsearch
 Enums
-FirehoseFactory
+FIRST_VALUE
 FlattenSpec
 Float.NEGATIVE_INFINITY
 Float.NEGATIVE_INFINITY.
@@ -106,9 +117,9 @@ GUIs
 GroupBy
 Guice
 HDFS
-HDFSFirehose
 HLL
 HashSet
+HashSets
 Homebrew
 html
 HyperLogLog
@@ -117,6 +128,7 @@ IANA
 IcebergFilter
 IcebergInputSource
 IETF
+IoT
 IP
 IPv4
 IPv6
@@ -163,12 +175,14 @@ Kerberos
 KeyStores
 Kinesis
 Kubernetes
+KubernetesClient
 Lakehouse
 LDAPS
 LRU
 LZ4
 LZO
 LimitSpec
+LISTAGG
 Long.MAX_VALUE
 Long.MAX_VALUE.
 Long.MIN_VALUE
@@ -185,6 +199,7 @@ Murmur3
 MVCC
 MV_TO_ARRAY
 NFS
+NodeCache
 OCF
 OIDC
 OLAP
@@ -196,6 +211,7 @@ OutputStream
 ParAccel
 ParseSpec
 ParseSpecs
+PathChildrenCache
 Protobuf
 protobuf
 pull-deps
@@ -209,8 +225,10 @@ ROUTINE_TYPE
 Rackspace
 Redis
 S3
+SAS
 SDK
 SIGAR
+SNI
 SPNEGO
 Splunk
 SqlInputSource
@@ -220,7 +238,6 @@ SSDs
 SSL
 Samza
 Splunk
-SqlFirehose
 SqlParameter
 SslContextFactory
 StatsD
@@ -233,8 +250,10 @@ TLS
 tls
 TopN
 TopNs
+tryParseNumbers
 UI
 UIs
+UPSERT
 URI
 URIs
 uris
@@ -266,10 +285,13 @@ averager
 averagers
 backend
 backfills
+backfilled
 backpressure
 base64
+baseTime
 big-endian
 bigint
+blkio
 blobstore
 Boolean
 boolean
@@ -287,6 +309,7 @@ colocation
 colocating
 compactable
 compactionTask
+complexMetricCompression
 config
 configs
 consumerProperties
@@ -313,6 +336,7 @@ deserializes
 downtimes
 druid
 druid–kubernetes-extensions
+druid.table
 e.g.
 encodings
 endian
@@ -320,6 +344,7 @@ endpointConfig
 enum
 expectedType
 expr
+fabric8
 failover
 failovers
 featureSpec
@@ -330,6 +355,7 @@ filterColumn
 filterValue
 firefox
 firehose
+FirehoseFactory
 firehoses
 fromPigAvroStorage
 frontends
@@ -350,6 +376,8 @@ https
 idempotency
 i.e.
 influxdb
+influencer
+influencers
 ingestions
 ingestionSpec
 injective
@@ -368,11 +396,14 @@ json_paths
 json_query
 json_query_array
 json_value
+json_merge
 karlkfi
+kbps
 kerberos
 keystore
 keytool
 keytab
+kubeconfig
 kubernetes
 kubexit
 k8s
@@ -382,7 +413,10 @@ localhost
 log4j
 log4j2
 log4j2.xml
+lookahead
+lookaheadDuration
 lookback
+lookbackDuration
 lookups
 mapreduce
 masse
@@ -393,6 +427,7 @@ maxNumSegments
 max_map_count
 memcached
 mergeable
+mergeability
 metadata
 metastores
 millis
@@ -401,6 +436,8 @@ microbatches
 misconfiguration
 misconfigured
 mostAvailableSize
+multipart
+multithreading
 multitenancy
 multitenant
 MVDs
@@ -415,10 +452,12 @@ nonfinalized
 non-null
 non-nullable
 noop
+NTILE
 numerics
 numShards
 parameterize
 objectGlob
+okhttp
 parameterized
 parse_json
 parseable
@@ -426,7 +465,9 @@ partitioner
 partitionFunction
 partitionsSpec
 pathParts
+PERCENT_RANK
 performant
+pipelining
 plaintext
 pluggable
 podSpec
@@ -439,6 +480,7 @@ pre-aggregating
 pre-aggregation
 pre-computation
 pre-compute
+pre-computed
 pre-computing
 preconfigured
 pre-existing
@@ -488,12 +530,14 @@ repo
 requireSSL
 rollup
 rollups
+ROW_NUMBER
 rsync
 runtime
 schemas
 schemaless
 searchable
 secondaryPartitionPruning
+seekable
 seekable-stream
 servlet
 setProcessingThreadNames
@@ -521,11 +565,14 @@ subqueries
 subquery
 subsecond
 substring
+substrings
 subtask
 subtasks
 supervisorTaskId
 SVG
 symlink
+sync
+syncs
 syntaxes
 systemFields
 tablePath
@@ -537,6 +584,7 @@ timestamps
 to_json_string
 tradeoffs
 transformSpec
+transactionally
 try_parse_json
 tsv
 ulimit
@@ -563,6 +611,7 @@ useFilterCNF
 useJqSyntax
 useJsonNodeReader
 useSSL
+upsert
 uptime
 uris
 urls
@@ -578,6 +627,7 @@ vectorizeVirtualColumns
 versioned
 versioning
 virtualColumns
+vert.x
 w.r.t.
 walkthrough
 whitelist
@@ -650,6 +700,7 @@ druid.sql.planner.maxSemiJoinRowsInMemory
 druid.sql.planner.sqlTimeZone
 druid.sql.planner.useApproximateCountDistinct
 druid.sql.planner.useApproximateTopN
+druid.sql.planner.useLexicographicTopN
 druid.sql.planner.useGroupingSetForExactDistinct
 druid.sql.planner.useNativeQueryExplain
 error_msg
@@ -688,6 +739,7 @@ total_size
 useApproximateCountDistinct
 useGroupingSetForExactDistinct
 useApproximateTopN
+useLexicographicTopN
 wikipedia
 your-table
 enableTimeBoundaryPlanning
@@ -862,8 +914,6 @@ hadoop3
 ambari-metrics
 metricName
 trustStore
-StaticAzureBlobStoreFirehose
-StaticS3Firehose
 fetchTimeout
 gz
 maxCacheCapacityBytes
@@ -872,11 +922,9 @@ maxFetchRetry
 prefetchTriggerBytes
 shardSpecs
 sharedAccessStorageToken
-StaticCloudFilesFirehose
 cloudfiles
 rackspace-cloudfiles-uk
 rackspace-cloudfiles-us
-StaticAzureBlobStoreFirehose
 gz
 shardSpecs
 maxCacheCapacityBytes
@@ -1078,7 +1126,6 @@ POD_NAMESPACE
 ConfigMap
 PT17S
 GCS
-StaticGoogleBlobStoreFirehose
 gcs-connector
 hdfs
 Aotearoa
@@ -1130,6 +1177,7 @@ taskDuration
 9.2dist
 KinesisSupervisorIOConfig
 KinesisSupervisorTuningConfig
+RabbitMQ
 Resharding
 resharding
 LZ4LZFuncompressedLZ4LZ4LZFuncompressednoneLZ4autolongsautolongslongstypeconcisetyperoaringtypestreamendpointreplicastaskCounttaskCount
@@ -1262,7 +1310,7 @@ ComplexMetrics
 DataSegmentArchiver
 DataSegmentKiller
 DataSegmentMover
-DataSegmentPuller
+URIDataPuller
 DataSegmentPusher
 DruidModule
 ExtractionFns
@@ -1277,7 +1325,6 @@ QueryRunnerFactory
 segmentmetadataquery
 SegmentMetadataQuery
 SegmentMetadataQueryQueryToolChest
-StaticS3FirehoseFactory
 loadSpec
 multibind
 pom.xml
@@ -1310,6 +1357,7 @@ listDelimiter
 lowerOpen
 timestamp
 timestampColumnName
+TimestampType
 timestampSpec
 upperOpen
 urls
@@ -1318,10 +1366,8 @@ valueFormat
 IOConfig
 compactionTask
 compactionTasks
-ingestSegmentFirehose
 numShards
 IngestSegment
-IngestSegmentFirehose
 maxSizes
 snapshotTime
 windowPeriod
@@ -1383,14 +1429,10 @@ useYarnRMJobStatusFallback
 workingPath
 z.example.com
 150MB
-CombiningFirehose
 DataSchema
 DefaultPassword
 EnvironmentVariablePasswordProvider
-HttpFirehose
 IOConfig
-InlineFirehose
-LocalFirehose
 PartitionsSpec
 PasswordProviders
 SegmentsSplitHintSpec
@@ -1427,12 +1469,9 @@ splitHintSpec
 taskStatusCheckPeriodMs
 timeChunk
 totalNumMergeTasks
-StaticS3Firehose
 prefetchTriggerBytes
 awaitSegmentAvailabilityTimeoutMillis
-LocalFirehose
 baseDir
-HttpFirehose
 httpAuthenticationUsername
 DefaultPassword
 PasswordProviders
@@ -1443,12 +1482,11 @@ maxInputSegmentBytesPerTask
 foldCase
 sqls
 connectorConfig
-InlineFirehose
-CombiningFirehose
 httpAuthenticationPassword
 accessKeyId
 secretAccessKey
 accessKeyId
+sessionToken
 httpAuthenticationPassword
 countryName
 appendToExisting
@@ -1497,6 +1535,7 @@ array_overlap
 array_prepend
 array_slice
 array_to_string
+scalar_in_array
 asin
 atan
 atan2
@@ -1640,12 +1679,10 @@ Temurin
 0.14.x
 1s
 Bufferpool
-EventReceiverFirehose
-EventReceiverFirehoseMonitor
 Filesystem
 JVMMonitor
+jvmVersion
 QueryCountStatsMonitor
-RealtimeMetricsMonitor
 Sys
 SysMonitor
 TaskCountStatsMonitor
@@ -1964,7 +2001,6 @@ GiB
 Autoscaler
 APPROX_COUNT_DISTINCT_BUILTIN
 AvaticaConnectionBalancer
-EventReceiverFirehose
 File.getFreeSpace
 File.getTotalSpace
 ForkJoinPool
@@ -2154,6 +2190,9 @@ jackson-jq
 missingValue
 skipBytesInMemoryOverheadCheck
 spatialDimensions
+radiusUnit
+euclidean
+kilometers
 useFieldDiscovery
 4CPU
 cityName
@@ -2172,9 +2211,7 @@ regionName
 json
 metastore
 UserGroupInformation
-CVE-2019-17571
-CVE-2019-12399
-CVE-2018-17196
+CVE-2024-45384
 bin.tar.gz
 0s
 1T
@@ -2205,6 +2242,7 @@ maxStreamLength
 toString
 100TB
 compressedBigDecimal
+compressedBigDecimalSum
 limitSpec
 metricsSpec
 postAggregations
@@ -2265,6 +2303,8 @@ MV_CONCAT
 MV_CONTAINS
 MV_FILTER_NONE
 MV_FILTER_ONLY
+MV_FILTER_REGEX
+MV_FILTER_PREFIX
 MV_LENGTH
 MV_OFFSET
 MV_OFFSET_OF
@@ -2395,6 +2435,7 @@ ddSketch
 DDSketch
 druid-ddsketch
 numBins
+ZGC
 
 - ../docs/development/extensions-contrib/spectator-histogram.md
 SpectatorHistogram
@@ -2409,3 +2450,18 @@ percentilesSpectatorHistogram
 quantilesFromDDSketch
 quantileFromDDSketch
 collapsingLowestDense
+snapshotVersion
+
+- ../docs/development/extensions-contrib/druid-exact-count-bitmap.md
+Bitmap64ExactCountBuild
+Bitmap64ExactCountMerge
+
+- ../docs/development/extensions-core/catalog.md
+ColumnSpec
+PropertyKeyName
+PropertyValueType
+tableSpec
+TableSpec
+
+- ../docs/development/extensions-contrib/prometheus.md
+TTL

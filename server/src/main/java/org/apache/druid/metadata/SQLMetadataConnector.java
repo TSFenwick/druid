@@ -25,19 +25,23 @@ import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.dbcp2.BasicDataSource;
 import org.apache.commons.dbcp2.BasicDataSourceFactory;
 import org.apache.druid.java.util.common.ISE;
 import org.apache.druid.java.util.common.RetryUtils;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.java.util.common.logger.Logger;
+import org.apache.druid.segment.metadata.CentralizedDatasourceSchemaConfig;
 import org.skife.jdbi.v2.Batch;
 import org.skife.jdbi.v2.DBI;
 import org.skife.jdbi.v2.Handle;
 import org.skife.jdbi.v2.TransactionCallback;
 import org.skife.jdbi.v2.TransactionIsolationLevel;
 import org.skife.jdbi.v2.TransactionStatus;
+import org.skife.jdbi.v2.exceptions.CallbackFailedException;
 import org.skife.jdbi.v2.exceptions.DBIException;
+import org.skife.jdbi.v2.exceptions.StatementException;
 import org.skife.jdbi.v2.exceptions.UnableToExecuteStatementException;
 import org.skife.jdbi.v2.exceptions.UnableToObtainConnectionException;
 import org.skife.jdbi.v2.tweak.HandleCallback;
@@ -45,6 +49,7 @@ import org.skife.jdbi.v2.util.ByteArrayMapper;
 import org.skife.jdbi.v2.util.IntegerMapper;
 
 import javax.annotation.Nullable;
+import javax.validation.constraints.NotNull;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
@@ -53,10 +58,14 @@ import java.sql.SQLRecoverableException;
 import java.sql.SQLTransientException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public abstract class SQLMetadataConnector implements MetadataStorageConnector
 {
@@ -64,20 +73,24 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
   private static final String PAYLOAD_TYPE = "BLOB";
   private static final String COLLATION = "";
 
-  static final int DEFAULT_MAX_TRIES = 10;
+  static final int QUIET_RETRIES = 2;
+  static final int DEFAULT_MAX_TRIES = 3;
 
   private final Supplier<MetadataStorageConnectorConfig> config;
   private final Supplier<MetadataStorageTablesConfig> tablesConfigSupplier;
   private final Predicate<Throwable> shouldRetry;
+  private final CentralizedDatasourceSchemaConfig centralizedDatasourceSchemaConfig;
 
   public SQLMetadataConnector(
       Supplier<MetadataStorageConnectorConfig> config,
-      Supplier<MetadataStorageTablesConfig> tablesConfigSupplier
+      Supplier<MetadataStorageTablesConfig> tablesConfigSupplier,
+      CentralizedDatasourceSchemaConfig centralizedDatasourceSchemaConfig
   )
   {
     this.config = config;
     this.tablesConfigSupplier = tablesConfigSupplier;
     this.shouldRetry = this::isTransientException;
+    this.centralizedDatasourceSchemaConfig = centralizedDatasourceSchemaConfig;
   }
 
   /**
@@ -148,7 +161,13 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
   )
   {
     try {
-      return RetryUtils.retry(() -> getDBI().withHandle(callback), myShouldRetry, DEFAULT_MAX_TRIES);
+      return RetryUtils.retry(
+          () -> getDBI().withHandle(callback),
+          myShouldRetry,
+          null,
+          DEFAULT_MAX_TRIES,
+          "Metadata transaction failed"
+      );
     }
     catch (Exception e) {
       Throwables.propagateIfPossible(e);
@@ -164,7 +183,14 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
   public <T> T retryTransaction(final TransactionCallback<T> callback, final int quietTries, final int maxTries)
   {
     try {
-      return RetryUtils.retry(() -> getDBI().inTransaction(TransactionIsolationLevel.READ_COMMITTED, callback), shouldRetry, quietTries, maxTries);
+      return RetryUtils.retry(
+          () -> getDBI().inTransaction(TransactionIsolationLevel.READ_COMMITTED, callback),
+          shouldRetry,
+          quietTries,
+          maxTries,
+          null,
+          "Metadata write transaction failed"
+      );
     }
     catch (Exception e) {
       Throwables.propagateIfPossible(e);
@@ -276,20 +302,27 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
                 + "  UNIQUE (sequence_name_prev_id_sha1)\n"
                 + ")",
                 tableName, getPayloadType(), getQuoteString(), getCollation()
-            ),
-            StringUtils.format(
-                "CREATE INDEX idx_%1$s_datasource_end ON %1$s(dataSource, %2$send%2$s)",
-                tableName,
-                getQuoteString()
-            ),
-            StringUtils.format(
-                "CREATE INDEX idx_%1$s_datasource_sequence ON %1$s(dataSource, sequence_name)",
-                tableName
             )
         )
     );
+    createIndex(
+        tableName,
+        "IDX_%S_DATASOURCE_END",
+        List.of("dataSource", quoteColumn("end"))
+    );
+    createIndex(
+        tableName,
+        "IDX_%S_DATASOURCE_SEQUENCE",
+        List.of("dataSource", "sequence_name")
+    );
+    alterPendingSegmentsTable(tableName);
   }
 
+  /**
+   * The {@code dataSource} column stores the supervisor ID.
+   * It has not been renamed to retain backwards compatibility.
+   * Supervisors created without an explicit supervisor id default to using the datasource name.
+   */
   public void createDataSourceTable(final String tableName)
   {
     createTable(
@@ -311,31 +344,55 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
 
   public void createSegmentTable(final String tableName)
   {
+    final List<String> columns = new ArrayList<>();
+    columns.add("id VARCHAR(255) NOT NULL");
+    columns.add("dataSource VARCHAR(255) %4$s NOT NULL");
+    columns.add("created_date VARCHAR(255) NOT NULL");
+    columns.add("start VARCHAR(255) NOT NULL");
+    columns.add("%3$send%3$s VARCHAR(255) NOT NULL");
+    columns.add("partitioned BOOLEAN NOT NULL");
+    columns.add("version VARCHAR(255) NOT NULL");
+    columns.add("used BOOLEAN NOT NULL");
+    columns.add("payload %2$s NOT NULL");
+    columns.add("used_status_last_updated VARCHAR(255) NOT NULL");
+
+    if (centralizedDatasourceSchemaConfig.isEnabled()) {
+      columns.add("schema_fingerprint VARCHAR(255)");
+      columns.add("num_rows BIGINT");
+    }
+
+    StringBuilder createStatementBuilder = new StringBuilder("CREATE TABLE %1$s (");
+
+    for (String column : columns) {
+      createStatementBuilder.append(column);
+      createStatementBuilder.append(",\n");
+    }
+
+    createStatementBuilder.append("PRIMARY KEY (id)\n)");
+
     createTable(
         tableName,
         ImmutableList.of(
             StringUtils.format(
-                "CREATE TABLE %1$s (\n"
-                + "  id VARCHAR(255) NOT NULL,\n"
-                + "  dataSource VARCHAR(255) %4$s NOT NULL,\n"
-                + "  created_date VARCHAR(255) NOT NULL,\n"
-                + "  start VARCHAR(255) NOT NULL,\n"
-                + "  %3$send%3$s VARCHAR(255) NOT NULL,\n"
-                + "  partitioned BOOLEAN NOT NULL,\n"
-                + "  version VARCHAR(255) NOT NULL,\n"
-                + "  used BOOLEAN NOT NULL,\n"
-                + "  payload %2$s NOT NULL,\n"
-                + "  used_status_last_updated VARCHAR(255) NOT NULL,\n"
-                + "  PRIMARY KEY (id)\n"
-                + ")",
+                createStatementBuilder.toString(),
                 tableName, getPayloadType(), getQuoteString(), getCollation()
-            ),
-            StringUtils.format("CREATE INDEX idx_%1$s_used ON %1$s(used)", tableName),
-            StringUtils.format(
-                "CREATE INDEX idx_%1$s_datasource_used_end_start ON %1$s(dataSource, used, %2$send%2$s, start)",
-                tableName,
-                getQuoteString()
             )
+        )
+    );
+
+    createIndex(
+        tableName,
+        "IDX_%S_USED",
+        List.of("used")
+    );
+    createIndex(
+        tableName,
+        "IDX_%S_DATASOURCE_USED_END_START",
+        List.of(
+            "dataSource",
+            "used",
+            quoteColumn("end"),
+            "start"
         )
     );
   }
@@ -354,12 +411,13 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
                 + "  PRIMARY KEY (id)\n"
                 + ")",
                 tableName, getSerialType()
-            ),
-            StringUtils.format(
-                "CREATE INDEX idx_%1$s_task ON %1$s(task_id)",
-                tableName
             )
         )
+    );
+    createIndex(
+        tableName,
+        "IDX_%S_TASK",
+        List.of("task_id")
     );
   }
 
@@ -377,9 +435,13 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
                 + "  PRIMARY KEY (id)\n"
                 + ")",
                 tableName, getPayloadType(), getCollation()
-            ),
-            StringUtils.format("CREATE INDEX idx_%1$s_datasource ON %1$s(dataSource)", tableName)
+            )
         )
+    );
+    createIndex(
+        tableName,
+        "IDX_%S_DATASOURCE",
+        List.of("dataSource")
     );
   }
 
@@ -425,18 +487,15 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
             )
         )
     );
-    final Set<String> createdIndexSet = getIndexOnTable(tableName);
     createIndex(
         tableName,
-        StringUtils.format("idx_%1$s_active_created_date", tableName),
-        ImmutableList.of("active", "created_date"),
-        createdIndexSet
+        "IDX_%S_ACTIVE_CREATED_DATE",
+        List.of("active", "created_date")
     );
     createIndex(
         tableName,
-        StringUtils.format("idx_%1$s_datasource_active", tableName),
-        ImmutableList.of("datasource", "active"),
-        createdIndexSet
+        "IDX_%S_DATASOURCE_ACTIVE",
+        List.of("datasource", "active")
     );
   }
 
@@ -460,26 +519,42 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
     }
   }
 
-  public void createLogTable(final String tableName, final String entryTypeName)
+  /**
+   * Adds the following columns to the pending segments table to clean up unused records,
+   * and to faciliatate concurrent append and replace.
+   * 1) task_allocator_id -> The task id / task group id / task replica group id of the task that allocated it.
+   * 2) upgraded_from_segment_id -> The id of the segment from which the entry was upgraded upon concurrent replace.
+   *
+   * Also, adds an index on (dataSource, task_allocator_id)
+   * @param tableName name of the pending segments table
+   */
+  private void alterPendingSegmentsTable(final String tableName)
   {
-    createTable(
+    List<String> statements = new ArrayList<>();
+    if (tableHasColumn(tableName, "upgraded_from_segment_id")) {
+      log.info("Table[%s] already has column[upgraded_from_segment_id].", tableName);
+    } else {
+      log.info("Adding column[upgraded_from_segment_id] to table[%s].", tableName);
+      statements.add(StringUtils.format("ALTER TABLE %1$s ADD COLUMN upgraded_from_segment_id VARCHAR(255)", tableName));
+    }
+    if (tableHasColumn(tableName, "task_allocator_id")) {
+      log.info("Table[%s] already has column[task_allocator_id].", tableName);
+    } else {
+      log.info("Adding column[task_allocator_id] to table[%s].", tableName);
+      statements.add(StringUtils.format("ALTER TABLE %1$s ADD COLUMN task_allocator_id VARCHAR(255)", tableName));
+    }
+    if (!statements.isEmpty()) {
+      alterTable(tableName, statements);
+    }
+
+    createIndex(
         tableName,
-        ImmutableList.of(
-            StringUtils.format(
-                "CREATE TABLE %1$s (\n"
-                + "  id %2$s NOT NULL,\n"
-                + "  %4$s_id VARCHAR(255) DEFAULT NULL,\n"
-                + "  log_payload %3$s,\n"
-                + "  PRIMARY KEY (id)\n"
-                + ")",
-                tableName, getSerialType(), getPayloadType(), entryTypeName
-            ),
-            StringUtils.format("CREATE INDEX idx_%1$s_%2$s_id ON %1$s(%2$s_id)", tableName, entryTypeName)
-        )
+        "IDX_%S_DATASOURCE_TASK_ALLOCATOR_ID",
+        List.of("dataSource", "task_allocator_id")
     );
   }
 
-  public void createLockTable(final String tableName, final String entryTypeName)
+  public void createLockTable(final String tableName)
   {
     createTable(
         tableName,
@@ -487,14 +562,18 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
             StringUtils.format(
                 "CREATE TABLE %1$s (\n"
                 + "  id %2$s NOT NULL,\n"
-                + "  %4$s_id VARCHAR(255) DEFAULT NULL,\n"
+                + "  task_id VARCHAR(255) DEFAULT NULL,\n"
                 + "  lock_payload %3$s,\n"
                 + "  PRIMARY KEY (id)\n"
                 + ")",
-                tableName, getSerialType(), getPayloadType(), entryTypeName
-            ),
-            StringUtils.format("CREATE INDEX idx_%1$s_%2$s_id ON %1$s(%2$s_id)", tableName, entryTypeName)
+                tableName, getSerialType(), getPayloadType()
+            )
         )
+    );
+    createIndex(
+        tableName,
+        "IDX_%S_TASK_ID",
+        List.of("task_id")
     );
   }
 
@@ -512,32 +591,67 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
                 + "  PRIMARY KEY (id)\n"
                 + ")",
                 tableName, getSerialType(), getPayloadType()
-            ),
-            StringUtils.format("CREATE INDEX idx_%1$s_spec_id ON %1$s(spec_id)", tableName)
+            )
         )
+    );
+    createIndex(
+        tableName,
+        "IDX_%S_SPEC_ID",
+        List.of("spec_id")
     );
   }
 
   /**
-   * Adds the used_status_last_updated column to the "segments" table.
+   * Adds new columns (used_status_last_updated) to the "segments" table.
+   * Conditionally, add schema_fingerprint, num_rows columns.
    */
-  protected void alterSegmentTableAddUsedFlagLastUpdated()
+  protected void alterSegmentTable()
   {
     final String tableName = tablesConfigSupplier.get().getSegmentsTable();
-    if (tableHasColumn(tableName, "used_status_last_updated")) {
-      log.info("Table[%s] already has column[used_status_last_updated].", tableName);
-    } else {
-      log.info("Adding column[used_status_last_updated] to table[%s].", tableName);
-      alterTable(
-          tableName,
-          ImmutableList.of(
-              StringUtils.format(
-                  "ALTER TABLE %1$s ADD used_status_last_updated varchar(255)",
-                  tableName
-              )
-          )
-      );
+
+    Map<String, String> columnNameTypes = new HashMap<>();
+    columnNameTypes.put("used_status_last_updated", "VARCHAR(255)");
+
+    columnNameTypes.put("upgraded_from_segment_id", "VARCHAR(255)");
+
+    if (centralizedDatasourceSchemaConfig.isEnabled()) {
+      columnNameTypes.put("schema_fingerprint", "VARCHAR(255)");
+      columnNameTypes.put("num_rows", "BIGINT");
     }
+
+    Set<String> columnsToAdd = new HashSet<>();
+
+    for (String columnName : columnNameTypes.keySet()) {
+      if (tableHasColumn(tableName, columnName)) {
+        log.info("Table[%s] already has column[%s].", tableName, columnName);
+      } else {
+        columnsToAdd.add(columnName);
+      }
+    }
+
+    List<String> alterCommands = new ArrayList<>();
+    if (!columnsToAdd.isEmpty()) {
+      for (String columnName : columnsToAdd) {
+        alterCommands.add(
+            StringUtils.format(
+                "ALTER TABLE %1$s ADD %2$s %3$s",
+                tableName,
+                columnName,
+                columnNameTypes.get(columnName)
+            )
+        );
+      }
+
+      log.info("Adding columns %s to table[%s].", columnsToAdd, tableName);
+    }
+
+    alterTable(tableName, alterCommands);
+
+    createIndex(
+        tableName,
+        "IDX_%S_DATASOURCE_UPGRADED_FROM_SEGMENT_ID",
+        List.of("dataSource", "upgraded_from_segment_id")
+    );
   }
 
   @Override
@@ -550,7 +664,7 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
   )
   {
     return getDBI().inTransaction(
-        new TransactionCallback<Void>()
+        new TransactionCallback<>()
         {
           @Override
           public Void inTransaction(Handle handle, TransactionStatus transactionStatus)
@@ -596,7 +710,7 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
   {
     return getDBI().inTransaction(
         TransactionIsolationLevel.REPEATABLE_READ,
-        new TransactionCallback<Boolean>()
+        new TransactionCallback<>()
         {
           @Override
           public Boolean inTransaction(Handle handle, TransactionStatus transactionStatus)
@@ -685,7 +799,7 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
   {
     if (config.get().isCreateTables()) {
       createSegmentTable(tablesConfigSupplier.get().getSegmentsTable());
-      alterSegmentTableAddUsedFlagLastUpdated();
+      alterSegmentTable();
     }
     // Called outside of the above conditional because we want to validate the table
     // regardless of cluster configuration for creating tables.
@@ -721,10 +835,8 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
   {
     if (config.get().isCreateTables()) {
       final MetadataStorageTablesConfig tablesConfig = tablesConfigSupplier.get();
-      final String entryType = tablesConfig.getTaskEntryType();
-      prepareTaskEntryTable(tablesConfig.getEntryTable(entryType));
-      createLogTable(tablesConfig.getLogTable(entryType), entryType);
-      createLockTable(tablesConfig.getLockTable(entryType), entryType);
+      prepareTaskEntryTable(tablesConfig.getTasksTable());
+      createLockTable(tablesConfig.getTaskLockTable());
     }
   }
 
@@ -783,7 +895,10 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
     return config.get();
   }
 
-  protected static BasicDataSource makeDatasource(MetadataStorageConnectorConfig connectorConfig, String validationQuery)
+  protected static BasicDataSource makeDatasource(
+      MetadataStorageConnectorConfig connectorConfig,
+      String validationQuery
+  )
   {
     BasicDataSource dataSource;
 
@@ -815,12 +930,34 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
     return makeDatasource(getConfig(), getValidationQuery());
   }
 
-  protected final <T> T inReadOnlyTransaction(
+  public final <T> T retryReadOnlyTransaction(
+      final TransactionCallback<T> callback,
+      int quietTries,
+      int maxTries
+  )
+  {
+    try {
+      return RetryUtils.retry(
+          () -> getDBI().inTransaction(TransactionIsolationLevel.READ_COMMITTED, callback),
+          shouldRetry,
+          quietTries,
+          maxTries,
+          null,
+          "Metadata read transaction failed"
+      );
+    }
+    catch (Exception e) {
+      Throwables.throwIfUnchecked(e);
+      throw new RuntimeException(e);
+    }
+  }
+
+  public final <T> T inReadOnlyTransaction(
       final TransactionCallback<T> callback
   )
   {
     return getDBI().withHandle(
-        new HandleCallback<T>()
+        new HandleCallback<>()
         {
           @Override
           public T withHandle(Handle handle) throws Exception
@@ -862,11 +999,23 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
                 + "  PRIMARY KEY(id)\n"
                 + ")",
                 tableName, getSerialType(), getPayloadType()
-            ),
-            StringUtils.format("CREATE INDEX idx_%1$s_key_time ON %1$s(audit_key, created_date)", tableName),
-            StringUtils.format("CREATE INDEX idx_%1$s_type_time ON %1$s(type, created_date)", tableName),
-            StringUtils.format("CREATE INDEX idx_%1$s_audit_time ON %1$s(created_date)", tableName)
+            )
         )
+    );
+    createIndex(
+        tableName,
+        "IDX_%s_KEY_TIME",
+        List.of("audit_key", "created_date")
+    );
+    createIndex(
+        tableName,
+        "IDX_%s_TYPE_TIME",
+        List.of("type", "created_date")
+    );
+    createIndex(
+        tableName,
+        "IDX_%s_AUDIT_TIME",
+        List.of("created_date")
     );
   }
 
@@ -906,6 +1055,48 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
     }
   }
 
+  public void createSegmentSchemasTable(final String tableName)
+  {
+    createTable(
+        tableName,
+        ImmutableList.of(
+            StringUtils.format(
+                "CREATE TABLE %1$s (\n"
+                + "  id %2$s NOT NULL,\n"
+                + "  created_date VARCHAR(255) NOT NULL,\n"
+                + "  datasource VARCHAR(255) NOT NULL,\n"
+                + "  fingerprint VARCHAR(255) NOT NULL,\n"
+                + "  payload %3$s NOT NULL,\n"
+                + "  used BOOLEAN NOT NULL,\n"
+                + "  used_status_last_updated VARCHAR(255) NOT NULL,\n"
+                + "  version INTEGER NOT NULL,\n"
+                + "  PRIMARY KEY (id),\n"
+                + "  UNIQUE (fingerprint) \n"
+                + ")",
+                tableName, getSerialType(), getPayloadType()
+            )
+        )
+    );
+    createIndex(
+        tableName,
+        "IDX_%s_FINGERPRINT",
+        List.of("fingerprint")
+    );
+    createIndex(
+        tableName,
+        "IDX_%s_USED",
+        List.of("used", "used_status_last_updated")
+    );
+  }
+
+  @Override
+  public void createSegmentSchemasTable()
+  {
+    if (config.get().isCreateTables() && centralizedDatasourceSchemaConfig.isEnabled()) {
+      createSegmentSchemasTable(tablesConfigSupplier.get().getSegmentSchemasTable());
+    }
+  }
+
   /**
    * Get the Set of the index on given table
    *
@@ -926,7 +1117,7 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
           ResultSet resultSet = getIndexInfo(databaseMetaData, tableName);
           while (resultSet.next()) {
             String indexName = resultSet.getString("INDEX_NAME");
-            if (org.apache.commons.lang.StringUtils.isNotBlank(indexName)) {
+            if (org.apache.commons.lang3.StringUtils.isNotBlank(indexName)) {
               res.add(StringUtils.toUpperCase(indexName));
             }
           }
@@ -959,46 +1150,56 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
   }
 
   /**
-   * create index on the table with retry if not already exist, to be called after createTable
+   * Create index on the table {@code tableName} with retry if not already exist, to be called after {@link #createTable}.
+   * Format of index name is either specified via {@code fullIndexNameFormat} or {@link #generateShortIndexName}.
    *
-   * @param tableName       Name of the table to create index on
-   * @param indexName       case-insensitive string index name, it helps to check the existing index on table
-   * @param indexCols       List of columns to be indexed on
-   * @param createdIndexSet
+   * @param tableName           Name of the table to create index on
+   * @param fullIndexNameFormat Template to create index ID. If specified, the only placeholder should be for the tableName. Otherwise, uses the format: {@code IDX_{table name}_{columns}}.
+   * @param indexCols           List of un-escaped column names to be indexed on (case-sensitive).
    */
   public void createIndex(
       final String tableName,
-      final String indexName,
-      final List<String> indexCols,
-      final Set<String> createdIndexSet
+      @Nullable final String fullIndexNameFormat,
+      final List<String> indexCols
   )
   {
+    final Set<String> createdIndexSet = getIndexOnTable(tableName);
+    final String shortIndexName = generateShortIndexName(tableName, indexCols);
+    final String fullIndexName = StringUtils.toUpperCase(fullIndexNameFormat != null
+                                                         ? StringUtils.format(fullIndexNameFormat, tableName)
+                                                         : StringUtils.format(
+                                                             "IDX_%S_%S",
+                                                             tableName,
+                                                             Joiner.on("_").join(indexCols)
+                                                         ));
+
+    // Avoid creating duplicate indices if an index with either naming convention already exists
+    if (createdIndexSet.contains(fullIndexName)) {
+      log.info("Full index[%s] on Table[%s] already exists", fullIndexName, tableName);
+      return;
+    } else if (createdIndexSet.contains(shortIndexName)) {
+      log.info("Short index[%s] on Table[%s] already exists", shortIndexName, tableName);
+      return;
+    }
+
+    final String indexName = tablesConfigSupplier.get().isUseShortIndexNames() ? shortIndexName : fullIndexName;
     try {
       retryWithHandle(
-          new HandleCallback<Void>()
-          {
-            @Override
-            public Void withHandle(Handle handle)
-            {
-              if (!createdIndexSet.contains(StringUtils.toUpperCase(indexName))) {
-                String indexSQL = StringUtils.format(
-                    "CREATE INDEX %1$s ON %2$s(%3$s)",
-                    indexName,
-                    tableName,
-                    Joiner.on(",").join(indexCols)
-                );
-                log.info("Creating Index on Table [%s], sql: [%s] ", tableName, indexSQL);
-                handle.execute(indexSQL);
-              } else {
-                log.info("Index [%s] on Table [%s] already exists", indexName, tableName);
-              }
-              return null;
-            }
+          (HandleCallback<Void>) handle -> {
+            String indexSQL = StringUtils.format(
+                "CREATE INDEX %1$s ON %2$s(%3$s)",
+                indexName,
+                tableName,
+                Joiner.on(",").join(indexCols)
+            );
+            log.info("Creating index[%s] on table[%s] using SQL[%s].", indexName, tableName, indexSQL);
+            handle.execute(indexSQL);
+            return null;
           }
       );
     }
     catch (Exception e) {
-      log.error(e, StringUtils.format("Exception while creating index on table [%s]", tableName));
+      log.error(e, "Exception while creating index[%s] on table[%s]", indexName, tableName);
     }
   }
 
@@ -1035,15 +1236,51 @@ public abstract class SQLMetadataConnector implements MetadataStorageConnector
    */
   private void validateSegmentsTable()
   {
-    if (tableHasColumn(tablesConfigSupplier.get().getSegmentsTable(), "used_status_last_updated")) {
+    String segmentsTables = tablesConfigSupplier.get().getSegmentsTable();
+
+    final boolean schemaPersistenceRequirementMet =
+        !centralizedDatasourceSchemaConfig.isEnabled() ||
+        (tableHasColumn(segmentsTables, "schema_fingerprint")
+         && tableHasColumn(segmentsTables, "num_rows"));
+
+    if (tableHasColumn(segmentsTables, "used_status_last_updated") && schemaPersistenceRequirementMet) {
       // do nothing
     } else {
       throw new ISE(
           "Cannot start Druid as table[%s] has an incompatible schema."
-          + " Reason: Column [used_status_last_updated] does not exist in table."
+          + " Reason: One or all of these columns [used_status_last_updated, schema_fingerprint, num_rows] does not exist in table."
           + " See https://druid.apache.org/docs/latest/operations/upgrade-prep.html for more info on remediation.",
           tablesConfigSupplier.get().getSegmentsTable()
       );
     }
+  }
+
+  public static boolean isStatementException(Throwable e)
+  {
+    return e instanceof StatementException ||
+           (e instanceof CallbackFailedException && e.getCause() instanceof StatementException);
+  }
+
+  /**
+   * Utility for quoting a column.
+   */
+  String quoteColumn(@NotNull String column)
+  {
+    return StringUtils.format("%1$s%2$s%1$s", getQuoteString(), column);
+  }
+
+  /**
+   * Creates a unique index name of length 24 with the format {@code IDX_{20 char SHA of table name + column list}}.
+   *
+   * @param tableName the table name
+   * @param columns   the set of columns to create the index on (case-insensitive)
+   * @return unique index identifier
+   */
+  protected String generateShortIndexName(String tableName, List<String> columns)
+  {
+    String joined = Stream.concat(Stream.of(tableName), columns.stream())
+                          .map(StringUtils::toLowerCase)
+                          .collect(Collectors.joining(","));
+    return "IDX_" + StringUtils.toUpperCase(DigestUtils.sha1Hex(joined));
   }
 }

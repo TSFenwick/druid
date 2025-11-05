@@ -26,12 +26,11 @@ import org.apache.druid.client.cache.CacheConfig;
 import org.apache.druid.client.cache.CachePopulatorStats;
 import org.apache.druid.client.coordinator.CoordinatorClient;
 import org.apache.druid.client.coordinator.NoopCoordinatorClient;
-import org.apache.druid.client.indexing.NoopOverlordClient;
 import org.apache.druid.discovery.DataNodeService;
 import org.apache.druid.discovery.DruidNodeAnnouncer;
 import org.apache.druid.discovery.LookupNodeService;
+import org.apache.druid.indexer.report.TaskReportFileWriter;
 import org.apache.druid.indexing.common.SegmentCacheManagerFactory;
-import org.apache.druid.indexing.common.TaskReportFileWriter;
 import org.apache.druid.indexing.common.TaskToolboxFactory;
 import org.apache.druid.indexing.common.actions.TaskActionClientFactory;
 import org.apache.druid.indexing.common.config.TaskConfig;
@@ -42,12 +41,16 @@ import org.apache.druid.indexing.common.task.batch.parallel.ShuffleClient;
 import org.apache.druid.indexing.worker.shuffle.IntermediaryDataManager;
 import org.apache.druid.java.util.emitter.service.ServiceEmitter;
 import org.apache.druid.java.util.metrics.MonitorScheduler;
+import org.apache.druid.query.DruidProcessingConfig;
 import org.apache.druid.query.QueryProcessingPool;
 import org.apache.druid.query.QueryRunnerFactoryConglomerate;
+import org.apache.druid.query.policy.PolicyEnforcer;
+import org.apache.druid.rpc.indexing.NoopOverlordClient;
 import org.apache.druid.rpc.indexing.OverlordClient;
 import org.apache.druid.segment.IndexIO;
 import org.apache.druid.segment.IndexMergerV9Factory;
 import org.apache.druid.segment.TestHelper;
+import org.apache.druid.segment.TestIndex;
 import org.apache.druid.segment.handoff.SegmentHandoffNotifierFactory;
 import org.apache.druid.segment.incremental.RowIngestionMetersFactory;
 import org.apache.druid.segment.join.JoinableFactory;
@@ -56,14 +59,15 @@ import org.apache.druid.segment.loading.DataSegmentKiller;
 import org.apache.druid.segment.loading.DataSegmentMover;
 import org.apache.druid.segment.loading.DataSegmentPusher;
 import org.apache.druid.segment.metadata.CentralizedDatasourceSchemaConfig;
+import org.apache.druid.segment.realtime.ChatHandlerProvider;
 import org.apache.druid.segment.realtime.appenderator.AppenderatorsManager;
-import org.apache.druid.segment.realtime.firehose.ChatHandlerProvider;
 import org.apache.druid.segment.writeout.OnHeapMemorySegmentWriteOutMediumFactory;
 import org.apache.druid.server.DruidNode;
 import org.apache.druid.server.coordination.DataSegmentAnnouncer;
 import org.apache.druid.server.coordination.DataSegmentServerAnnouncer;
 import org.apache.druid.server.security.AuthorizerMapper;
 import org.apache.druid.tasklogs.TaskLogPusher;
+import org.apache.druid.utils.RuntimeInfo;
 
 public class TestTaskToolboxFactory extends TaskToolboxFactory
 {
@@ -83,6 +87,7 @@ public class TestTaskToolboxFactory extends TaskToolboxFactory
         bob.taskExecutorNode,
         bob.taskActionClientFactory,
         bob.emitter,
+        bob.policyEnforcer,
         bob.segmentPusher,
         bob.dataSegmentKiller,
         bob.dataSegmentMover,
@@ -91,6 +96,7 @@ public class TestTaskToolboxFactory extends TaskToolboxFactory
         bob.serverAnnouncer,
         bob.handoffNotifierFactory,
         bob.queryRunnerFactoryConglomerateProvider,
+        bob.processingConfigProvider,
         bob.queryProcessingPool,
         bob.joinableFactory,
         bob.monitorSchedulerProvider,
@@ -117,7 +123,8 @@ public class TestTaskToolboxFactory extends TaskToolboxFactory
         bob.shuffleClient,
         bob.taskLogPusher,
         bob.attemptId,
-        bob.centralizedDatasourceSchemaConfig
+        bob.centralizedDatasourceSchemaConfig,
+        bob.runtimeInfo
     );
   }
 
@@ -127,6 +134,7 @@ public class TestTaskToolboxFactory extends TaskToolboxFactory
     private DruidNode taskExecutorNode;
     private TaskActionClientFactory taskActionClientFactory = task -> null;
     private ServiceEmitter emitter;
+    private PolicyEnforcer policyEnforcer;
     private DataSegmentPusher segmentPusher;
     private DataSegmentKiller dataSegmentKiller;
     private DataSegmentMover dataSegmentMover;
@@ -135,12 +143,13 @@ public class TestTaskToolboxFactory extends TaskToolboxFactory
     private DataSegmentServerAnnouncer serverAnnouncer;
     private SegmentHandoffNotifierFactory handoffNotifierFactory;
     private Provider<QueryRunnerFactoryConglomerate> queryRunnerFactoryConglomerateProvider;
+    private Provider<DruidProcessingConfig> processingConfigProvider;
     private QueryProcessingPool queryProcessingPool;
     private JoinableFactory joinableFactory;
     private Provider<MonitorScheduler> monitorSchedulerProvider;
     private ObjectMapper jsonMapper = TestHelper.JSON_MAPPER;
     private IndexIO indexIO = TestHelper.getTestIndexIO();
-    private SegmentCacheManagerFactory segmentCacheManagerFactory = new SegmentCacheManagerFactory(jsonMapper);
+    private SegmentCacheManagerFactory segmentCacheManagerFactory = new SegmentCacheManagerFactory(TestIndex.INDEX_IO, jsonMapper);
     private Cache cache;
     private CacheConfig cacheConfig;
     private CachePopulatorStats cachePopulatorStats;
@@ -162,6 +171,7 @@ public class TestTaskToolboxFactory extends TaskToolboxFactory
     private TaskLogPusher taskLogPusher;
     private String attemptId;
     private CentralizedDatasourceSchemaConfig centralizedDatasourceSchemaConfig;
+    private RuntimeInfo runtimeInfo;
 
     public Builder setConfig(TaskConfig config)
     {
@@ -184,6 +194,12 @@ public class TestTaskToolboxFactory extends TaskToolboxFactory
     public Builder setEmitter(ServiceEmitter emitter)
     {
       this.emitter = emitter;
+      return this;
+    }
+
+    public Builder setPolicyEnforcer(PolicyEnforcer policyEnforcer)
+    {
+      this.policyEnforcer = policyEnforcer;
       return this;
     }
 
@@ -232,6 +248,12 @@ public class TestTaskToolboxFactory extends TaskToolboxFactory
     public Builder setQueryRunnerFactoryConglomerateProvider(Provider<QueryRunnerFactoryConglomerate> queryRunnerFactoryConglomerateProvider)
     {
       this.queryRunnerFactoryConglomerateProvider = queryRunnerFactoryConglomerateProvider;
+      return this;
+    }
+
+    public Builder setProcessingConfigProvider(Provider<DruidProcessingConfig> processingConfigProvider)
+    {
+      this.processingConfigProvider = processingConfigProvider;
       return this;
     }
 
@@ -391,9 +413,16 @@ public class TestTaskToolboxFactory extends TaskToolboxFactory
       return this;
     }
 
-    public void setCentralizedTableSchemaConfig(CentralizedDatasourceSchemaConfig centralizedDatasourceSchemaConfig)
+    public Builder setCentralizedTableSchemaConfig(CentralizedDatasourceSchemaConfig centralizedDatasourceSchemaConfig)
     {
       this.centralizedDatasourceSchemaConfig = centralizedDatasourceSchemaConfig;
+      return this;
+    }
+
+    public Builder setRuntimeInfo(RuntimeInfo runtimeInfo)
+    {
+      this.runtimeInfo = runtimeInfo;
+      return this;
     }
   }
 }

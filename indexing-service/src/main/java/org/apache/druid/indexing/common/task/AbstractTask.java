@@ -153,7 +153,7 @@ public abstract class AbstractTask implements Task
       FileUtils.mkdirp(taskDir);
       File attemptDir = Paths.get(taskDir.getAbsolutePath(), "attempt", toolbox.getAttemptId()).toFile();
       FileUtils.mkdirp(attemptDir);
-      reportsFile = new File(attemptDir, "report.json");
+      reportsFile = toolbox.getTaskReportFileWriter().getReportsFile(getId());
       statusFile = new File(attemptDir, "status.json");
       InetAddress hostName = InetAddress.getLocalHost();
       DruidNode node = toolbox.getTaskExecutorNode();
@@ -201,8 +201,10 @@ public abstract class AbstractTask implements Task
     // clear any interrupted status to ensure subsequent cleanup proceeds without interruption.
     Thread.interrupted();
 
+    // isEncapsulatedTask() currently means "isK8sIngestion".
+    // We don't need to push reports and status here for other ingestion methods.
     if (!toolbox.getConfig().isEncapsulatedTask()) {
-      log.debug("Not pushing task logs and reports from task.");
+      log.info("Not pushing task logs and reports from task.");
       return;
     }
 
@@ -381,17 +383,6 @@ public abstract class AbstractTask implements Task
   public Map<String, Object> getContext()
   {
     return context;
-  }
-
-  /**
-   * Whether maximum memory usage should be considered in estimation for indexing tasks.
-   */
-  protected boolean isUseMaxMemoryEstimates()
-  {
-    return getContextValue(
-        Tasks.USE_MAX_MEMORY_ESTIMATES,
-        Tasks.DEFAULT_USE_MAX_MEMORY_ESTIMATES
-    );
   }
 
   protected ServiceMetricEvent.Builder getMetricBuilder()

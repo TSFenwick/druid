@@ -21,10 +21,12 @@ package org.apache.druid.segment.column;
 
 import com.google.common.collect.Ordering;
 import com.google.common.primitives.Longs;
+import org.apache.druid.guice.BuiltInTypesModule;
 import org.apache.druid.java.util.common.IAE;
 import org.apache.druid.java.util.common.Pair;
 import org.apache.druid.java.util.common.guava.Comparators;
 import org.apache.druid.math.expr.ExpressionType;
+import org.apache.druid.segment.nested.StructuredData;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Rule;
@@ -34,6 +36,8 @@ import org.junit.rules.ExpectedException;
 import javax.annotation.Nullable;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.junit.Assert.assertNull;
 
@@ -49,6 +53,7 @@ public class TypeStrategiesTest
   @BeforeClass
   public static void setup()
   {
+    BuiltInTypesModule.registerHandlersAndSerde();
     TypeStrategies.registerComplex(NULLABLE_TEST_PAIR_TYPE.getComplexTypeName(), new NullableLongPairTypeStrategy());
   }
 
@@ -109,6 +114,12 @@ public class TypeStrategiesTest
       public int compare(Object o1, Object o2)
       {
         return 0;
+      }
+
+      @Override
+      public boolean groupable()
+      {
+        return false;
       }
     });
   }
@@ -326,6 +337,25 @@ public class TypeStrategiesTest
   }
 
   @Test
+  public void testJsonComparator()
+  {
+    TypeStrategy<StructuredData> strategy = ColumnType.NESTED_DATA.getStrategy();
+    Assert.assertEquals(-1, strategy.compare(StructuredData.wrap(null), StructuredData.wrap(Map.of("key", "val"))));
+
+    NullableTypeStrategy<StructuredData> nullableTypeStrategy = ColumnType.NESTED_DATA.getNullableStrategy();
+    Assert.assertEquals(-1, nullableTypeStrategy.compare(null, StructuredData.wrap(Map.of("key", "val"))));
+    Assert.assertEquals(0, nullableTypeStrategy.compare(
+        StructuredData.wrap(Map.of("key1", Map.of("sub-key1", "sub-val1"), "key2", "val2")),
+        StructuredData.wrap(Map.of("key1", Map.of("sub-key1", "sub-val1"), "key2", "val2"))
+    ));
+    // hash value is computed based on serialized bytes
+    Assert.assertEquals(-1, nullableTypeStrategy.compare(
+        StructuredData.wrap(Map.of("key1", Map.of("sub-key1", "sub-val1-different"), "key2", "val2")),
+        StructuredData.wrap(Map.of("key1", Map.of("sub-key1", "sub-val1"), "key2", "val2"))
+    ));
+  }
+
+  @Test
   public void testNulls()
   {
     int offset = 0;
@@ -447,6 +477,17 @@ public class TypeStrategiesTest
     assertStrategy(strategy, new NullableLongPair(null, 1L));
     assertStrategy(strategy, new NullableLongPair(1234L, 5678L));
     assertStrategy(strategy, new NullableLongPair(1234L, null));
+  }
+
+  @Test
+  public void testComplexJsonTypeStrategy()
+  {
+    final TypeStrategy strategy = TypeStrategies.getComplex(ColumnType.NESTED_DATA.getComplexTypeName());
+    Map<String, Object> nested = new HashMap<>();
+    nested.put("key1", "val");
+    assertStrategy(strategy, StructuredData.wrap(nested));
+    nested.put("key2", null);
+    assertStrategy(strategy, StructuredData.wrap(nested));
   }
 
   @Test
@@ -692,6 +733,12 @@ public class TypeStrategiesTest
     public NullableLongPair fromBytes(byte[] value)
     {
       return read(ByteBuffer.wrap(value));
+    }
+
+    @Override
+    public boolean groupable()
+    {
+      return false;
     }
   }
 

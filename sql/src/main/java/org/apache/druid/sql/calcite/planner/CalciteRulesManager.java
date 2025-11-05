@@ -28,6 +28,7 @@ import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.plan.hep.HepMatchOrder;
 import org.apache.calcite.plan.hep.HepProgram;
 import org.apache.calcite.plan.hep.HepProgramBuilder;
 import org.apache.calcite.plan.volcano.AbstractConverter;
@@ -35,22 +36,30 @@ import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.metadata.DefaultRelMetadataProvider;
+import org.apache.calcite.rel.rules.AggregateProjectMergeRule;
 import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.rules.DateRangeRules;
+import org.apache.calcite.rel.rules.FilterCorrelateRule;
+import org.apache.calcite.rel.rules.FilterJoinRule.FilterIntoJoinRule.FilterIntoJoinRuleConfig;
+import org.apache.calcite.rel.rules.FilterProjectTransposeRule;
+import org.apache.calcite.rel.rules.JoinExtractFilterRule;
 import org.apache.calcite.rel.rules.JoinPushThroughJoinRule;
+import org.apache.calcite.rel.rules.ProjectMergeRule;
+import org.apache.calcite.rel.rules.ProjectRemoveRule;
 import org.apache.calcite.rel.rules.PruneEmptyRules;
 import org.apache.calcite.sql.SqlExplainFormat;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql2rel.RelDecorrelator;
-import org.apache.calcite.sql2rel.RelFieldTrimmer;
 import org.apache.calcite.tools.Program;
 import org.apache.calcite.tools.Programs;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.druid.java.util.common.logger.Logger;
+import org.apache.druid.query.JoinAlgorithm;
 import org.apache.druid.sql.calcite.external.ExternalTableScanRule;
 import org.apache.druid.sql.calcite.rule.AggregatePullUpLookupRule;
 import org.apache.druid.sql.calcite.rule.CaseToCoalesceRule;
 import org.apache.druid.sql.calcite.rule.CoalesceLookupRule;
+import org.apache.druid.sql.calcite.rule.DruidAggregateCaseToFilterRule;
 import org.apache.druid.sql.calcite.rule.DruidLogicalValuesRule;
 import org.apache.druid.sql.calcite.rule.DruidRelToDruidRule;
 import org.apache.druid.sql.calcite.rule.DruidRules;
@@ -59,14 +68,22 @@ import org.apache.druid.sql.calcite.rule.ExtensionCalciteRuleProvider;
 import org.apache.druid.sql.calcite.rule.FilterDecomposeCoalesceRule;
 import org.apache.druid.sql.calcite.rule.FilterDecomposeConcatRule;
 import org.apache.druid.sql.calcite.rule.FilterJoinExcludePushToChildRule;
+import org.apache.druid.sql.calcite.rule.FixIncorrectInExpansionTypes;
 import org.apache.druid.sql.calcite.rule.FlattenConcatRule;
 import org.apache.druid.sql.calcite.rule.ProjectAggregatePruneUnusedCallRule;
 import org.apache.druid.sql.calcite.rule.ReverseLookupRule;
+import org.apache.druid.sql.calcite.rule.RewriteFirstValueLastValueRule;
 import org.apache.druid.sql.calcite.rule.SortCollapseRule;
+import org.apache.druid.sql.calcite.rule.logical.DruidAggregateRemoveRedundancyRule;
+import org.apache.druid.sql.calcite.rule.logical.DruidJoinRule;
 import org.apache.druid.sql.calcite.rule.logical.DruidLogicalRules;
+import org.apache.druid.sql.calcite.rule.logical.LogicalUnnestRule;
+import org.apache.druid.sql.calcite.rule.logical.UnnestInputCleanupRule;
 import org.apache.druid.sql.calcite.run.EngineFeature;
+import org.apache.druid.sql.hook.DruidHook;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
@@ -81,6 +98,8 @@ public class CalciteRulesManager
   private static final int HEP_DEFAULT_MATCH_LIMIT = Integer.parseInt(
       System.getProperty(HEP_DEFAULT_MATCH_LIMIT_CONFIG_STRING, "1200")
   );
+  public static final String BLOAT_PROPERTY = "sqlPlannerBloat";
+  public static final int DEFAULT_BLOAT = 1000;
 
   /**
    * Rules from {@link org.apache.calcite.plan.RelOptRules#BASE_RULES}, minus:
@@ -94,17 +113,18 @@ public class CalciteRulesManager
    * and {@link CoreRules#FILTER_INTO_JOIN}, which are part of {@link #FANCY_JOIN_RULES}.
    * 4) {@link CoreRules#PROJECT_FILTER_TRANSPOSE} because PartialDruidQuery would like to have the Project on top of the Filter -
    * this rule could create a lot of non-useful plans.
+   * 5) {@link CoreRules#PROJECT_MERGE} added later with bloat parameter configured from query context as a workaround for Calcite exception
+   * (there are not enough rules to produce a node with desired properties) thrown while running complex sql-queries with
+   * big amount of subqueries.
    */
   private static final List<RelOptRule> BASE_RULES =
       ImmutableList.of(
           CoreRules.AGGREGATE_STAR_TABLE,
           CoreRules.AGGREGATE_PROJECT_STAR_TABLE,
-          CoreRules.PROJECT_MERGE,
           CoreRules.FILTER_SCAN,
           CoreRules.FILTER_PROJECT_TRANSPOSE,
           CoreRules.JOIN_PUSH_EXPRESSIONS,
           CoreRules.AGGREGATE_EXPAND_WITHIN_DISTINCT,
-          CoreRules.AGGREGATE_CASE_TO_FILTER,
           CoreRules.FILTER_AGGREGATE_TRANSPOSE,
           CoreRules.PROJECT_WINDOW_TRANSPOSE,
           CoreRules.MATCH,
@@ -238,19 +258,52 @@ public class CalciteRulesManager
     return ImmutableList.of(
         Programs.sequence(
             druidPreProgram,
+            SaveLogicalPlanProgram.INSTANCE,
             Programs.ofRules(druidConventionRuleSet(plannerContext)),
             new LoggingProgram("After Druid volcano planner program", isDebug)
         ),
         Programs.sequence(
             bindablePreProgram,
+            SaveLogicalPlanProgram.INSTANCE,
             Programs.ofRules(bindableConventionRuleSet(plannerContext)),
             new LoggingProgram("After bindable volcano planner program", isDebug)
         ),
         Programs.sequence(
             druidPreProgram,
+            buildDecoupledLogicalOptimizationProgram(plannerContext),
+            SaveLogicalPlanProgram.INSTANCE,
+            new LoggingProgram("After DecoupledLogicalOptimizationProgram program", isDebug),
             Programs.ofRules(logicalConventionRuleSet(plannerContext)),
             new LoggingProgram("After logical volcano planner program", isDebug)
         )
+    );
+  }
+
+  private Program buildDecoupledLogicalOptimizationProgram(PlannerContext plannerContext)
+  {
+    final HepProgramBuilder builder = HepProgram.builder();
+    builder.addMatchOrder(HepMatchOrder.BOTTOM_UP);
+    builder.addMatchLimit(CalciteRulesManager.HEP_DEFAULT_MATCH_LIMIT);
+    builder.addRuleCollection(baseRuleSet(plannerContext, false));
+    builder.addRuleInstance(CoreRules.UNION_MERGE);
+    builder.addRuleInstance(FilterCorrelateRule.Config.DEFAULT.toRule());
+    builder.addRuleInstance(FilterProjectTransposeRule.Config.DEFAULT.toRule());
+    builder.addRuleInstance(JoinExtractFilterRule.Config.DEFAULT.toRule());
+    builder.addRuleInstance(FilterIntoJoinRuleConfig.DEFAULT.withPredicate(DruidJoinRule::isSupportedPredicate).toRule());
+    builder.addRuleInstance(FilterProjectTransposeRule.Config.DEFAULT.toRule());
+    builder.addRuleInstance(new LogicalUnnestRule());
+    builder.addRuleInstance(new UnnestInputCleanupRule());
+    builder.addRuleInstance(ProjectMergeRule.Config.DEFAULT.toRule());
+    builder.addRuleInstance(ProjectRemoveRule.Config.DEFAULT.toRule());
+
+    final HepProgramBuilder cleanupRules = HepProgram.builder();
+    cleanupRules.addRuleInstance(FilterProjectTransposeRule.Config.DEFAULT.toRule());
+    cleanupRules.addRuleInstance(CoreRules.PROJECT_MERGE);
+    cleanupRules.addRuleInstance(AggregateProjectMergeRule.Config.DEFAULT.toRule());
+    return Programs.sequence(
+        Programs.of(builder.build(), true, DefaultRelMetadataProvider.INSTANCE),
+        new DruidTrimFieldsProgram(),
+        Programs.of(cleanupRules.build(), true, DefaultRelMetadataProvider.INSTANCE)
     );
   }
 
@@ -267,6 +320,7 @@ public class CalciteRulesManager
     // Program that pre-processes the tree before letting the full-on VolcanoPlanner loose.
     final List<Program> prePrograms = new ArrayList<>();
     prePrograms.add(new LoggingProgram("Start", isDebug));
+    prePrograms.add(sqlToRelWorkaroundProgram());
     prePrograms.add(Programs.subQuery(DefaultRelMetadataProvider.INSTANCE));
     prePrograms.add(new LoggingProgram("Finished subquery program", isDebug));
     prePrograms.add(DecorrelateAndTrimFieldsProgram.INSTANCE);
@@ -280,6 +334,12 @@ public class CalciteRulesManager
     }
 
     return Programs.sequence(prePrograms.toArray(new Program[0]));
+  }
+
+  private Program sqlToRelWorkaroundProgram()
+  {
+    Set<RelOptRule> rules = Collections.singleton(new FixIncorrectInExpansionTypes());
+    return Programs.hep(rules, true, DefaultRelMetadataProvider.INSTANCE);
   }
 
   /**
@@ -317,6 +377,7 @@ public class CalciteRulesManager
       // make it impossible to convert to COALESCE.
       builder.addRuleInstance(new CaseToCoalesceRule());
       builder.addRuleInstance(new CoalesceLookupRule());
+      builder.addRuleInstance(new RewriteFirstValueLastValueRule());
     }
 
     // Remaining rules run as a single group until fixpoint.
@@ -351,6 +412,20 @@ public class CalciteRulesManager
     builder.addGroupEnd();
 
     return Programs.of(builder.build(), true, DefaultRelMetadataProvider.INSTANCE);
+  }
+
+  private static class SaveLogicalPlanProgram implements Program
+  {
+    public static SaveLogicalPlanProgram INSTANCE = new SaveLogicalPlanProgram();
+
+    @Override
+    public RelNode run(RelOptPlanner planner, RelNode rel, RelTraitSet requiredOutputTraits,
+        List<RelOptMaterialization> materializations, List<RelOptLattice> lattices)
+    {
+      PlannerContext pctx = planner.getContext().unwrapOrThrow(PlannerContext.class);
+      pctx.dispatchHook(DruidHook.LOGICAL_PLAN, rel);
+      return rel;
+    }
   }
 
   private static class LoggingProgram implements Program
@@ -388,7 +463,7 @@ public class CalciteRulesManager
   {
     final ImmutableList.Builder<RelOptRule> retVal = ImmutableList
         .<RelOptRule>builder()
-        .addAll(baseRuleSet(plannerContext))
+        .addAll(baseRuleSet(plannerContext, plannerContext.getJoinAlgorithm().requiresSubquery()))
         .add(DruidRelToDruidRule.instance())
         .add(new DruidTableScanRule(plannerContext))
         .add(new DruidLogicalValuesRule(plannerContext))
@@ -405,7 +480,7 @@ public class CalciteRulesManager
   {
     final ImmutableList.Builder<RelOptRule> retVal = ImmutableList
         .<RelOptRule>builder()
-        .addAll(baseRuleSet(plannerContext))
+        .add(CoreRules.SORT_REMOVE)
         .add(new DruidLogicalRules(plannerContext).rules().toArray(new RelOptRule[0]));
     return retVal.build();
   }
@@ -413,14 +488,25 @@ public class CalciteRulesManager
   public List<RelOptRule> bindableConventionRuleSet(final PlannerContext plannerContext)
   {
     return ImmutableList.<RelOptRule>builder()
-                        .addAll(baseRuleSet(plannerContext))
+                        .addAll(baseRuleSet(plannerContext, false))
                         .addAll(Bindables.RULES)
                         .addAll(DEFAULT_BINDABLE_RULES)
                         .add(CoreRules.AGGREGATE_REDUCE_FUNCTIONS)
                         .build();
   }
 
-  public List<RelOptRule> baseRuleSet(final PlannerContext plannerContext)
+  public List<RelOptRule> configurableRuleSet(PlannerContext plannerContext)
+  {
+    return ImmutableList.of(ProjectMergeRule.Config.DEFAULT.withBloat(getBloatProperty(plannerContext)).toRule());
+  }
+
+  private int getBloatProperty(PlannerContext plannerContext)
+  {
+    final Integer bloat = plannerContext.queryContext().getInt(BLOAT_PROPERTY);
+    return (bloat != null) ? bloat : DEFAULT_BLOAT;
+  }
+
+  public List<RelOptRule> baseRuleSet(final PlannerContext plannerContext, boolean withJoinRules)
   {
     final PlannerConfig plannerConfig = plannerContext.getPlannerConfig();
     final ImmutableList.Builder<RelOptRule> rules = ImmutableList.builder();
@@ -429,10 +515,14 @@ public class CalciteRulesManager
     rules.addAll(BASE_RULES);
     rules.addAll(ABSTRACT_RULES);
     rules.addAll(ABSTRACT_RELATIONAL_RULES);
+    rules.add(new DruidAggregateCaseToFilterRule(plannerContext.queryContext().isExtendedFilteredSumRewrite()));
+    rules.addAll(configurableRuleSet(plannerContext));
 
-    if (plannerContext.getJoinAlgorithm().requiresSubquery()) {
+    if (withJoinRules) {
       rules.addAll(FANCY_JOIN_RULES);
     }
+
+    rules.add(DruidAggregateRemoveRedundancyRule.instance());
 
     if (!plannerConfig.isUseApproximateCountDistinct()) {
       if (plannerConfig.isUseGroupingSetForExactDistinct()
@@ -470,7 +560,24 @@ public class CalciteRulesManager
     {
       final RelBuilder relBuilder = RelFactories.LOGICAL_BUILDER.create(rel.getCluster(), null);
       final RelNode decorrelatedRel = RelDecorrelator.decorrelateQuery(rel, relBuilder);
-      return new RelFieldTrimmer(null, relBuilder).trim(decorrelatedRel);
+      RelNode ret = new DruidRelFieldTrimmer(null, relBuilder).trim(decorrelatedRel);
+      return ret;
+    }
+
+  }
+
+  /** Program that trims fields. */
+  private static class DruidTrimFieldsProgram implements Program
+  {
+    @Override
+    public RelNode run(RelOptPlanner planner, RelNode rel,
+        RelTraitSet requiredOutputTraits,
+        List<RelOptMaterialization> materializations,
+        List<RelOptLattice> lattices)
+    {
+      final RelBuilder relBuilder = RelFactories.LOGICAL_BUILDER.create(rel.getCluster(), null);
+      RelNode ret = new DruidRelFieldTrimmer(null, relBuilder).trim(rel);
+      return ret;
     }
   }
 }

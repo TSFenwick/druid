@@ -21,7 +21,6 @@ package org.apache.druid.indexing.common.task.batch.parallel;
 
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.lang3.mutable.MutableObject;
-import org.apache.druid.data.input.FirehoseFactory;
 import org.apache.druid.data.input.InputSource;
 import org.apache.druid.data.input.InputSplit;
 import org.apache.druid.data.input.impl.SplittableInputSource;
@@ -29,7 +28,6 @@ import org.apache.druid.indexing.common.Counters;
 import org.apache.druid.indexing.common.LockGranularity;
 import org.apache.druid.indexing.common.TaskLockType;
 import org.apache.druid.indexing.common.TaskToolbox;
-import org.apache.druid.indexing.common.actions.TaskLocks;
 import org.apache.druid.indexing.common.task.AbstractBatchIndexTask;
 import org.apache.druid.indexing.common.task.Task;
 import org.apache.druid.indexing.common.task.batch.parallel.TaskMonitor.SubTaskCompleteEvent;
@@ -101,38 +99,24 @@ public class SinglePhaseParallelIndexTaskRunner extends ParallelIndexPhaseRunner
 
   private final ParallelIndexIngestionSpec ingestionSchema;
   private final SplittableInputSource<?> baseInputSource;
+  private final ParallelIndexSupervisorTask supervisorTask;
 
   SinglePhaseParallelIndexTaskRunner(
       TaskToolbox toolbox,
-      String taskId,
-      String groupId,
-      String baseSubtaskSpecName,
-      ParallelIndexIngestionSpec ingestionSchema,
-      Map<String, Object> context
+      ParallelIndexSupervisorTask supervisorTask
   )
   {
     super(
         toolbox,
-        taskId,
-        groupId,
-        baseSubtaskSpecName,
-        ingestionSchema.getTuningConfig(),
-        context
+        supervisorTask.getId(),
+        supervisorTask.getGroupId(),
+        supervisorTask.getBaseSubtaskSpecName(),
+        supervisorTask.getIngestionSchema().getTuningConfig(),
+        supervisorTask.getContext()
     );
-    this.ingestionSchema = ingestionSchema;
+    this.ingestionSchema = supervisorTask.getIngestionSchema();
     this.baseInputSource = (SplittableInputSource) ingestionSchema.getIOConfig().getNonNullInputSource(toolbox);
-  }
-
-  @VisibleForTesting
-  SinglePhaseParallelIndexTaskRunner(
-      TaskToolbox toolbox,
-      String taskId,
-      String groupId,
-      ParallelIndexIngestionSpec ingestionSchema,
-      Map<String, Object> context
-  )
-  {
-    this(toolbox, taskId, groupId, taskId, ingestionSchema, context);
+    this.supervisorTask = supervisorTask;
   }
 
   @Override
@@ -169,9 +153,7 @@ public class SinglePhaseParallelIndexTaskRunner extends ParallelIndexPhaseRunner
   @VisibleForTesting
   SubTaskSpec<SinglePhaseSubTask> newTaskSpec(InputSplit split)
   {
-    final FirehoseFactory firehoseFactory;
     final InputSource inputSource;
-    firehoseFactory = null;
     inputSource = baseInputSource.withSplit(split);
 
     final Map<String, Object> subtaskContext = new HashMap<>(getContext());
@@ -182,7 +164,6 @@ public class SinglePhaseParallelIndexTaskRunner extends ParallelIndexPhaseRunner
         new ParallelIndexIngestionSpec(
             ingestionSchema.getDataSchema(),
             new ParallelIndexIOConfig(
-                firehoseFactory,
                 inputSource,
                 ingestionSchema.getIOConfig().getInputFormat(),
                 ingestionSchema.getIOConfig().isAppendToExisting(),
@@ -206,7 +187,7 @@ public class SinglePhaseParallelIndexTaskRunner extends ParallelIndexPhaseRunner
   @Deprecated
   public SegmentIdWithShardSpec allocateNewSegment(String dataSource, DateTime timestamp) throws IOException
   {
-    NonnullPair<Interval, String> intervalAndVersion = findIntervalAndVersion(timestamp);
+    NonnullPair<Interval, String> intervalAndVersion = findIntervalAndVersion(timestamp, supervisorTask.getTaskLockHelper().getLockGranularityToUse());
 
     final int partitionNum = Counters.getAndIncrementInt(partitionNumCountersPerInterval, intervalAndVersion.lhs);
     return new SegmentIdWithShardSpec(
@@ -236,7 +217,7 @@ public class SinglePhaseParallelIndexTaskRunner extends ParallelIndexPhaseRunner
       @Nullable String prevSegmentId
   ) throws IOException
   {
-    NonnullPair<Interval, String> intervalAndVersion = findIntervalAndVersion(timestamp);
+    NonnullPair<Interval, String> intervalAndVersion = findIntervalAndVersion(timestamp, LockGranularity.TIME_CHUNK);
 
     MutableObject<SegmentIdWithShardSpec> segmentIdHolder = new MutableObject<>();
     sequenceToSegmentIds.compute(sequenceName, (k, v) -> {
@@ -284,9 +265,9 @@ public class SinglePhaseParallelIndexTaskRunner extends ParallelIndexPhaseRunner
     return segmentIdHolder.getValue();
   }
 
-  NonnullPair<Interval, String> findIntervalAndVersion(DateTime timestamp) throws IOException
+  NonnullPair<Interval, String> findIntervalAndVersion(DateTime timestamp, LockGranularity granularity) throws IOException
   {
-    TaskLockType taskLockType = TaskLocks.determineLockTypeForAppend(getContext());
+    TaskLockType taskLockType = supervisorTask.determineLockType(granularity);
     return AbstractBatchIndexTask.findIntervalAndVersion(getToolbox(), ingestionSchema, timestamp, taskLockType);
   }
 

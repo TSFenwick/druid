@@ -28,19 +28,15 @@ public class TaskConfigBuilder
 {
   private String baseDir;
   private String baseTaskDir;
-  private String hadoopWorkingPath;
-  private Integer defaultRowFlushBoundary;
-  private List<String> defaultHadoopCoordinates;
   private boolean restoreTasksOnRestart;
   private Period gracefulShutdownTimeout;
   private Period directoryLockTimeout;
   private List<StorageLocationConfig> shuffleDataLocations;
   private boolean ignoreTimestampSpecForDruidInputSource;
-  private boolean batchMemoryMappedIndex; // deprecated; only set to true to fall back to older behavior
-  private String batchProcessingMode;
   private Boolean storeEmptyColumns;
   private boolean enableTaskLevelLogPush;
   private Long tmpStorageBytesPerTask;
+  private boolean allowHadoopTaskExecution;
 
   public TaskConfigBuilder setBaseDir(String baseDir)
   {
@@ -51,24 +47,6 @@ public class TaskConfigBuilder
   public TaskConfigBuilder setBaseTaskDir(String baseTaskDir)
   {
     this.baseTaskDir = baseTaskDir;
-    return this;
-  }
-
-  public TaskConfigBuilder setHadoopWorkingPath(String hadoopWorkingPath)
-  {
-    this.hadoopWorkingPath = hadoopWorkingPath;
-    return this;
-  }
-
-  public TaskConfigBuilder setDefaultRowFlushBoundary(Integer defaultRowFlushBoundary)
-  {
-    this.defaultRowFlushBoundary = defaultRowFlushBoundary;
-    return this;
-  }
-
-  public TaskConfigBuilder setDefaultHadoopCoordinates(List<String> defaultHadoopCoordinates)
-  {
-    this.defaultHadoopCoordinates = defaultHadoopCoordinates;
     return this;
   }
 
@@ -102,18 +80,6 @@ public class TaskConfigBuilder
     return this;
   }
 
-  public TaskConfigBuilder setBatchMemoryMappedIndex(boolean batchMemoryMappedIndex)
-  {
-    this.batchMemoryMappedIndex = batchMemoryMappedIndex;
-    return this;
-  }
-
-  public TaskConfigBuilder setBatchProcessingMode(String batchProcessingMode)
-  {
-    this.batchProcessingMode = batchProcessingMode;
-    return this;
-  }
-
   public TaskConfigBuilder setStoreEmptyColumns(Boolean storeEmptyColumns)
   {
     this.storeEmptyColumns = storeEmptyColumns;
@@ -132,24 +98,26 @@ public class TaskConfigBuilder
     return this;
   }
 
+  public TaskConfigBuilder setAllowHadoopTaskExecution(boolean allowHadoopTaskExecution)
+  {
+    this.allowHadoopTaskExecution = allowHadoopTaskExecution;
+    return this;
+  }
+
   public TaskConfig build()
   {
     return new TaskConfig(
         baseDir,
         baseTaskDir,
-        hadoopWorkingPath,
-        defaultRowFlushBoundary,
-        defaultHadoopCoordinates,
         restoreTasksOnRestart,
         gracefulShutdownTimeout,
         directoryLockTimeout,
         shuffleDataLocations,
         ignoreTimestampSpecForDruidInputSource,
-        batchMemoryMappedIndex,
-        batchProcessingMode,
         storeEmptyColumns,
         enableTaskLevelLogPush,
-        tmpStorageBytesPerTask
+        tmpStorageBytesPerTask,
+        allowHadoopTaskExecution
     );
   }
 }

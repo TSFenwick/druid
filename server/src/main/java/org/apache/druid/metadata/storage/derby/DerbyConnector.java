@@ -31,6 +31,7 @@ import org.apache.druid.metadata.MetadataStorage;
 import org.apache.druid.metadata.MetadataStorageConnectorConfig;
 import org.apache.druid.metadata.MetadataStorageTablesConfig;
 import org.apache.druid.metadata.SQLMetadataConnector;
+import org.apache.druid.segment.metadata.CentralizedDatasourceSchemaConfig;
 import org.skife.jdbi.v2.DBI;
 import org.skife.jdbi.v2.Handle;
 import org.skife.jdbi.v2.tweak.HandleCallback;
@@ -53,10 +54,11 @@ public class DerbyConnector extends SQLMetadataConnector
   public DerbyConnector(
       MetadataStorage storage,
       Supplier<MetadataStorageConnectorConfig> config,
-      Supplier<MetadataStorageTablesConfig> dbTables
+      Supplier<MetadataStorageTablesConfig> dbTables,
+      CentralizedDatasourceSchemaConfig centralizedDatasourceSchemaConfig
   )
   {
-    super(config, dbTables);
+    super(config, dbTables, centralizedDatasourceSchemaConfig);
 
     final BasicDataSource datasource = getDatasource();
     datasource.setDriverClassLoader(getClass().getClassLoader());
@@ -71,10 +73,11 @@ public class DerbyConnector extends SQLMetadataConnector
       MetadataStorage storage,
       Supplier<MetadataStorageConnectorConfig> config,
       Supplier<MetadataStorageTablesConfig> dbTables,
-      DBI dbi
+      DBI dbi,
+      CentralizedDatasourceSchemaConfig centralizedDatasourceSchemaConfig
   )
   {
-    super(config, dbTables);
+    super(config, dbTables, centralizedDatasourceSchemaConfig);
     this.dbi = dbi;
     this.storage = storage;
   }
@@ -181,7 +184,7 @@ public class DerbyConnector extends SQLMetadataConnector
   public boolean tableHasColumn(String tableName, String columnName)
   {
     return getDBI().withHandle(
-        new HandleCallback<Boolean>()
+        new HandleCallback<>()
         {
           @Override
           public Boolean withHandle(Handle handle)
@@ -189,13 +192,14 @@ public class DerbyConnector extends SQLMetadataConnector
             try {
               if (tableExists(handle, tableName)) {
                 DatabaseMetaData dbMetaData = handle.getConnection().getMetaData();
-                ResultSet columns = dbMetaData.getColumns(
-                    null,
-                    null,
-                    tableName.toUpperCase(Locale.ENGLISH),
-                    columnName.toUpperCase(Locale.ENGLISH)
-                );
-                return columns.next();
+                try (ResultSet columns = dbMetaData.getColumns(
+                        null,
+                        null,
+                        tableName.toUpperCase(Locale.ENGLISH),
+                        columnName.toUpperCase(Locale.ENGLISH)
+                )) {
+                  return columns.next();
+                }
               } else {
                 return false;
               }

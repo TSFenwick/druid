@@ -90,7 +90,7 @@ documentation.
 ## PIVOT
 
 :::info
-The PIVOT operator is an [experimental feature](../development/experimental-features.md).
+The PIVOT operator is an [experimental feature](../development/experimental.md).
 :::
 
 The PIVOT operator carries out an aggregation and transforms rows into columns in the output.
@@ -147,7 +147,7 @@ LIMIT 15
 ## UNPIVOT
 
 :::info
-The UNPIVOT operator is an [experimental feature](../development/experimental-features.md).
+The UNPIVOT operator is an [experimental feature](../development/experimental.md).
 :::
 
 The UNPIVOT operator transforms existing column values into rows.
@@ -209,7 +209,10 @@ The UNNEST clause unnests ARRAY typed values. The source for UNNEST can be an ar
 The following is the general syntax for UNNEST, specifically a query that returns the column that gets unnested:
 
 ```sql
-SELECT column_alias_name FROM datasource CROSS JOIN UNNEST(source_expression1) AS table_alias_name1(column_alias_name1) CROSS JOIN UNNEST(source_expression2) AS table_alias_name2(column_alias_name2) ...
+SELECT column_alias_name
+FROM datasource
+CROSS JOIN UNNEST(source_expression1) AS table_alias_name1(column_alias_name1)
+CROSS JOIN UNNEST(source_expression2) AS table_alias_name2(column_alias_name2) ...
 ```
 
 * The `datasource` for UNNEST can be any Druid datasource, such as the following:
@@ -359,6 +362,12 @@ GROUP BY col1
 
 With table-level UNION ALL, the rows from the unioned tables are not guaranteed to process in any particular order. They may process in an interleaved fashion. If you need a particular result ordering, use [ORDER BY](#order-by) on the outer query.
 
+To reference such unions a [TABLE(APPEND())](datasource.md#dynamic-table-append) datasource could also be used:
+```sql
+SELECT col1, COUNT(*) from TABLE(APPEND('tbl1', 'tbl2'))
+```
+
+
 ## EXPLAIN PLAN
 
 Add "EXPLAIN PLAN FOR" to the beginning of any query to get information about how it will be translated. In this case,
@@ -369,6 +378,35 @@ documentation for more information on the output of EXPLAIN PLAN.
  For the legacy plan, be careful when interpreting EXPLAIN PLAN output, and use [request logging](../configuration/index.md#request-logging) if in doubt.
 Request logs show the exact native query that will be run. Alternatively, to see the native query plan, set `useNativeQueryExplain` to true in the query context.
 :::
+
+## SET
+
+SET statements allow you to specify SQL query context parameters that modify the behavior of a Druid SQL query. You can include one or more SET statements before the main SQL query. Druid supports using SET in the Druid SQL [JSON API](../api-reference/sql-api.md) and the [web console](../operations/web-console.md). 
+
+The syntax of a `SET` statement is:
+
+```sql
+SET identifier = literal;
+```
+
+For example:
+
+```sql
+SET useApproximateTopN = false;
+SET sqlTimeZone = 'America/Los_Angeles';
+SET timeout = 90000;
+SELECT some_column, COUNT(*) FROM druid.foo WHERE other_column = 'foo' GROUP BY 1 ORDER BY 2 DESC
+```
+
+SET statements only apply to the query in the same request. Subsequent requests are not affected.
+
+SET statements work with SELECT, INSERT, and REPLACE queries.
+
+If you use the [JSON API](../api-reference/sql-api.md), you can also include query context parameters using the `context` field. If you include both, the parameter value in SET takes precedence over the parameter value in `context`.
+
+Note that you can only use SET to assign literal values, such as numbers, strings, or Booleans. To set a query context parameter to an array or JSON object, use the `context` field rather than SET.
+
+For other approaches to set the query context, see [Set query context](./query-context.md).
 
 ## Identifiers and literals
 
@@ -382,12 +420,28 @@ like `100` (denoting an integer), `100.0` (denoting a floating point value), or 
 timestamps can be written like `TIMESTAMP '2000-01-01 00:00:00'`. Literal intervals, used for time arithmetic, can be
 written like `INTERVAL '1' HOUR`, `INTERVAL '1 02:03' DAY TO MINUTE`, `INTERVAL '1-2' YEAR TO MONTH`, and so on.
 
+
 ## Dynamic parameters
 
 Druid SQL supports dynamic parameters using question mark (`?`) syntax, where parameters are bound to `?` placeholders
 at execution time. To use dynamic parameters, replace any literal in the query with a `?` character and provide a
 corresponding parameter value when you execute the query. Parameters are bound to the placeholders in the order in
 which they are passed. Parameters are supported in both the [HTTP POST](../api-reference/sql-api.md) and [JDBC](../api-reference/sql-jdbc.md) APIs.
+
+Druid supports double and null values in arrays for dynamic queries.
+The following example query uses the [ARRAY_CONTAINS](./sql-functions.md#array_contains) function to return `doubleArrayColumn` when the reference array `[-25.7, null, 36.85]` contains all elements of the value of `doubleArrayColumn`:
+
+```sql
+{
+   "query": "SELECT doubleArrayColumn from druid.table where ARRAY_CONTAINS(doubleArrayColumn, ?)",
+   "parameters": [
+      {
+        "type": "ARRAY",
+        "value": [-25.7, null, 36.85]
+      }
+   ]
+}
+```
 
 In certain cases, using dynamic parameters in expressions can cause type inference issues which cause your query to fail, for example:
 
@@ -397,6 +451,32 @@ SELECT * FROM druid.foo WHERE dim1 like CONCAT('%', ?, '%')
 
 To solve this issue, explicitly provide the type of the dynamic parameter using the `CAST` keyword. Consider the fix for the preceding example:
 
-```
+```sql
 SELECT * FROM druid.foo WHERE dim1 like CONCAT('%', CAST (? AS VARCHAR), '%')
+```
+
+Dynamic parameters can even replace arrays, reducing the parsing time. Refer to the parameters in the [API request body](../api-reference/sql-api.md#request-body) for usage.
+
+```sql
+SELECT arrayColumn from druid.table where ARRAY_CONTAINS(arrayColumn, ?)
+```
+
+You can replace an IN filter with many values by dynamically passing a parameter into [SCALAR_IN_ARRAY](sql-functions.md#scalar_in_array).
+For example Java queries, see [Dynamic parameters](../api-reference/sql-jdbc.md#dynamic-parameters).
+
+```sql
+SELECT count(city) from druid.table where SCALAR_IN_ARRAY(city, ?)
+```
+
+## Reserved keywords
+
+Druid SQL reserves certain keywords which are used in its query language. Apache Druid inherits all of the reserved keywords from [Apache Calcite](https://calcite.apache.org/docs/reference.html#keywords). In addition to these, the following reserved keywords are unique to Apache Druid:
+
+* **CLUSTERED**
+* **PARTITIONED**
+
+To use the reserved keywords in queries, enclose them in double quotation marks. For example, the reserved keyword **PARTITIONED** can be used in a query if and only if it is correctly quoted:
+
+```sql
+SELECT "PARTITIONED" from druid.table
 ```

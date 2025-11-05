@@ -49,7 +49,7 @@ The following sections describe inserting, filtering, and grouping behavior base
 ## Ingestion
 
 ### Native batch and streaming ingestion
-When using native [batch](../ingestion/native-batch.md) or streaming ingestion such as with [Apache Kafka](../development/extensions-core/kafka-ingestion.md), the Druid web console data loader can detect multi-value dimensions and configure the `dimensionsSpec` accordingly.
+When using native [batch](../ingestion/native-batch.md) or streaming ingestion such as with [Apache Kafka](../ingestion/kafka-ingestion.md), the Druid web console data loader can detect multi-value dimensions and configure the `dimensionsSpec` accordingly.
 
 For TSV or CSV data, you can specify the multi-value delimiters using the `listDelimiter` field in the `inputFormat`. JSON data must be formatted as a JSON array to be ingested as a multi-value dimension. JSON data does not require `inputFormat` configuration.
 
@@ -252,7 +252,7 @@ results in:
 ```sql
 SELECT label, tags
 FROM "mvd_example_rollup"
-WHERE tags = 't3'
+WHERE label in ('row1','row2')
 GROUP BY 1,2
 ```
 
@@ -498,7 +498,7 @@ Having specs are applied at the outermost level of groupBy query processing.
 ## Disable GroupBy on multi-value columns
 
 You can disable the implicit unnesting behavior for groupBy by setting `groupByEnableMultiValueUnnesting: false` in your 
-[query context](query-context.md). In this mode, the groupBy engine will return an error instead of completing the query. This is a safety 
+[query context](query-context-reference.md). In this mode, the groupBy engine will return an error instead of completing the query. This is a safety 
 feature for situations where you believe that all dimensions are singly-valued and want the engine to reject any 
 multi-valued dimensions that were inadvertently included.
 
@@ -507,9 +507,9 @@ Avoid confusing string arrays with [multi-value dimensions](multi-value-dimensio
 
 Use care during ingestion to ensure you get the type you want.
 
-To get arrays when performing an ingestion using JSON ingestion specs, such as [native batch](../ingestion/native-batch.md) or streaming ingestion such as with [Apache Kafka](../development/extensions-core/kafka-ingestion.md), use dimension type `auto` or enable `useSchemaDiscovery`. When performing a [SQL-based ingestion](../multi-stage-query/index.md), write a query that generates arrays and set the context parameter `"arrayIngestMode": "array"`. Arrays may contain strings or numbers.
+To get arrays when performing an ingestion using JSON ingestion specs, such as [native batch](../ingestion/native-batch.md) or streaming ingestion such as with [Apache Kafka](../ingestion/kafka-ingestion.md), use dimension type `auto` or enable `useSchemaDiscovery`. When performing a [SQL-based ingestion](../multi-stage-query/index.md), write a query that generates arrays. Arrays may contain strings or numbers.
 
-To get multi-value dimensions when performing an ingestion using JSON ingestion specs, use dimension type `string` and do not enable `useSchemaDiscovery`. When performing a [SQL-based ingestion](../multi-stage-query/index.md), wrap arrays in [`ARRAY_TO_MV`](multi-value-dimensions.md#sql-based-ingestion), which ensures you get multi-value dimensions in any `arrayIngestMode`. Multi-value dimensions can only contain strings.
+To get multi-value dimensions when performing an ingestion using JSON ingestion specs, use dimension type `string` and do not enable `useSchemaDiscovery`. When performing a [SQL-based ingestion](../multi-stage-query/index.md), wrap arrays in [`ARRAY_TO_MV`](multi-value-dimensions.md#sql-based-ingestion). Multi-value dimensions can only contain strings.
 
 You can tell which type you have by checking the `INFORMATION_SCHEMA.COLUMNS` table, using a query like:
 

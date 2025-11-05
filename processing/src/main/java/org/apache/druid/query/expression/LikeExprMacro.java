@@ -19,8 +19,6 @@
 
 package org.apache.druid.query.expression;
 
-import org.apache.druid.common.config.NullHandling;
-import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.math.expr.Expr;
 import org.apache.druid.math.expr.ExprEval;
 import org.apache.druid.math.expr.ExprMacroTable;
@@ -66,15 +64,15 @@ public class LikeExprMacro implements ExprMacroTable.ExprMacro
     }
 
     final LikeDimFilter.LikeMatcher likeMatcher = LikeDimFilter.LikeMatcher.from(
-        NullHandling.nullToEmptyIfNeeded((String) patternExpr.getLiteralValue()),
+        (String) patternExpr.getLiteralValue(),
         escapeChar
     );
 
-    class LikeExtractExpr extends ExprMacroTable.BaseScalarUnivariateMacroFunctionExpr
+    class LikeExtractExpr extends ExprMacroTable.BaseScalarMacroFunctionExpr
     {
-      private LikeExtractExpr(Expr arg)
+      private LikeExtractExpr(List<Expr> args)
       {
-        super(FN_NAME, arg);
+        super(LikeExprMacro.this, args);
       }
 
       @Nonnull
@@ -88,35 +86,13 @@ public class LikeExprMacro implements ExprMacroTable.ExprMacro
         return ExprEval.ofLongBoolean(match.matches(false));
       }
 
-      @Override
-      public Expr visit(Shuttle shuttle)
-      {
-        return shuttle.visit(apply(shuttle.visitAll(args)));
-      }
-
       @Nullable
       @Override
       public ExpressionType getOutputType(InputBindingInspector inspector)
       {
         return ExpressionType.LONG;
       }
-
-      @Override
-      public String stringify()
-      {
-        if (escapeExpr != null) {
-          return StringUtils.format(
-              "%s(%s, %s, %s)",
-              FN_NAME,
-              arg.stringify(),
-              patternExpr.stringify(),
-              escapeExpr.stringify()
-          );
-        }
-        return StringUtils.format("%s(%s, %s)", FN_NAME, arg.stringify(), patternExpr.stringify());
-      }
     }
-    return new LikeExtractExpr(arg);
+    return new LikeExtractExpr(args);
   }
 }
-

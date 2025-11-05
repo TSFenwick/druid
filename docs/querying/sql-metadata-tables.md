@@ -234,8 +234,10 @@ Servers table lists all discovered servers in the cluster.
 |tier|VARCHAR|Distribution tier see [druid.server.tier](../configuration/index.md#historical-general-configuration). Only valid for HISTORICAL type, for other types it's null|
 |current_size|BIGINT|Current size of segments in bytes on this server. Only valid for HISTORICAL type, for other types it's 0|
 |max_size|BIGINT|Max size in bytes this server recommends to assign to segments see [druid.server.maxSize](../configuration/index.md#historical-general-configuration). Only valid for HISTORICAL type, for other types it's 0|
-|is_leader|BIGINT|1 if the server is currently the 'leader' (for services which have the concept of leadership), otherwise 0 if the server is not the leader, or the default long value (null or zero depending on `druid.generic.useDefaultValueForNull`) if the server type does not have the concept of leadership|
+|is_leader|BIGINT|1 if the server is currently the 'leader' (for services which have the concept of leadership), otherwise 0 if the server is not the leader, or null if the server type does not have the concept of leadership|
 |start_time|STRING|Timestamp in ISO8601 format when the server was announced in the cluster|
+|version|VARCHAR|Druid version running on the server|
+|labels|VARCHAR|Labels for the server configured using the property [`druid.labels`](../configuration/index.md)|
 To retrieve information about all servers, use the query:
 
 ```sql
@@ -266,7 +268,7 @@ GROUP BY servers.server;
 
 ### TASKS table
 
-The tasks table provides information about active and recently-completed indexing tasks. For more information
+The tasks table provides information about active and recently completed tasks. For more information
 check out the documentation for [ingestion tasks](../ingestion/tasks.md).
 
 |Column|Type|Notes|
@@ -299,8 +301,9 @@ The supervisors table provides information about supervisors.
 |Column|Type|Notes|
 |------|-----|-----|
 |supervisor_id|VARCHAR|Supervisor task identifier|
-|state|VARCHAR|Basic state of the supervisor. Available states: `UNHEALTHY_SUPERVISOR`, `UNHEALTHY_TASKS`, `PENDING`, `RUNNING`, `SUSPENDED`, `STOPPING`. Check [Kafka Docs](../development/extensions-core/kafka-supervisor-operations.md) for details.|
-|detailed_state|VARCHAR|Supervisor specific state. (See documentation of the specific supervisor for details, e.g. [Kafka](../development/extensions-core/kafka-ingestion.md) or [Kinesis](../development/extensions-core/kinesis-ingestion.md))|
+|datasource|VARCHAR|Datasource the supervisor operates on|
+|state|VARCHAR|Basic state of the supervisor. Available states: `UNHEALTHY_SUPERVISOR`, `UNHEALTHY_TASKS`, `PENDING`, `RUNNING`, `SUSPENDED`, `STOPPING`. See [Supervisor reference](../ingestion/supervisor.md) for more information.|
+|detailed_state|VARCHAR|Supervisor specific state. See documentation of the specific supervisor for details: [Kafka](../ingestion/kafka-ingestion.md) or [Kinesis](../ingestion/kinesis-ingestion.md).|
 |healthy|BIGINT|Boolean represented as long type where 1 = true, 0 = false. 1 indicates a healthy supervisor|
 |type|VARCHAR|Type of supervisor, e.g. `kafka`, `kinesis` or `materialized_view`|
 |source|VARCHAR|Source of the supervisor, e.g. Kafka topic or Kinesis stream|

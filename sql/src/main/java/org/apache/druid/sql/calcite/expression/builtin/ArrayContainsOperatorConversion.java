@@ -22,6 +22,7 @@ package org.apache.druid.sql.calcite.expression.builtin;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlFunction;
+import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlTypeFamily;
@@ -34,6 +35,7 @@ import org.apache.druid.query.filter.AndDimFilter;
 import org.apache.druid.query.filter.ArrayContainsElementFilter;
 import org.apache.druid.query.filter.DimFilter;
 import org.apache.druid.query.filter.EqualityFilter;
+import org.apache.druid.query.filter.NullFilter;
 import org.apache.druid.segment.column.ColumnType;
 import org.apache.druid.segment.column.RowSignature;
 import org.apache.druid.sql.calcite.expression.DruidExpression;
@@ -66,12 +68,17 @@ public class ArrayContainsOperatorConversion extends BaseExpressionDimFilterOper
               )
           )
       )
-      .returnTypeInference(ReturnTypes.BOOLEAN)
+      .returnTypeInference(ReturnTypes.BOOLEAN_NULLABLE)
       .build();
 
   public ArrayContainsOperatorConversion()
   {
-    super(SQL_FUNCTION, EXPR_FUNCTION);
+    this(SQL_FUNCTION, EXPR_FUNCTION);
+  }
+
+  protected ArrayContainsOperatorConversion(SqlOperator operator, String druidFunctionName)
+  {
+    super(operator, druidFunctionName);
   }
 
   @Nullable
@@ -129,14 +136,18 @@ public class ArrayContainsOperatorConversion extends BaseExpressionDimFilterOper
                                         leftExpr,
                                         leftExpr.getDruidType()
                                     );
-              filters.add(
-                  new EqualityFilter(
-                      column,
-                      ExpressionType.toColumnType(ExpressionType.elementType(exprEval.type())),
-                      val,
-                      null
-                  )
-              );
+              if (val == null) {
+                filters.add(NullFilter.forColumn(column));
+              } else {
+                filters.add(
+                    new EqualityFilter(
+                        column,
+                        ExpressionType.toColumnType(ExpressionType.elementType(exprEval.type())),
+                        val,
+                        null
+                    )
+                );
+              }
             }
           }
 
@@ -144,8 +155,10 @@ public class ArrayContainsOperatorConversion extends BaseExpressionDimFilterOper
         }
       }
     }
-    // if the input is a direct array column, we can use sweet array filter
-    if (leftExpr.isDirectColumnAccess() && leftExpr.isArray()) {
+    // if this is really ARRAY_CONTAINS (not the subclass MV_CONTAINS), and the input is a direct array column,
+    // we can use sweet array filter
+    final boolean isArrayContains = SQL_FUNCTION.equals(calciteOperator());
+    if (isArrayContains && leftExpr.isDirectColumnAccess() && leftExpr.isArray()) {
       Expr expr = plannerContext.parseExpression(rightExpr.getExpression());
       // To convert this expression filter into an AND of ArrayContainsElement filters, we need to extract all array
       // elements. For now, we can optimize only when rightExpr is a literal because there is no way to extract the
@@ -180,12 +193,12 @@ public class ArrayContainsOperatorConversion extends BaseExpressionDimFilterOper
           return new ArrayContainsElementFilter(
               leftExpr.getSimpleExtraction().getColumn(),
               ExpressionType.toColumnType(exprEval.type()),
-              exprEval.valueOrDefault(),
+              exprEval.value(),
               null
           );
         }
       }
     }
-    return toExpressionFilter(plannerContext, getDruidFunctionName(), druidExpressions);
+    return toExpressionFilter(plannerContext, druidExpressions);
   }
 }

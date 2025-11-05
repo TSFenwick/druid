@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-import React from 'react';
+import { Code } from '@blueprintjs/core';
 
 import type { Field } from '../../components';
 import { ExternalLink } from '../../components';
@@ -36,6 +36,18 @@ export const FILTER_SUGGESTIONS: string[] = [
   '*.avro',
 ];
 
+export const OBJECT_GLOB_SUGGESTIONS: string[] = [
+  '**.jsonl',
+  '**.jsonl.gz',
+  '**.json',
+  '**.json.gz',
+  '**.csv',
+  '**.tsv',
+  '**.parquet',
+  '**.orc',
+  '**.avro',
+];
+
 export interface InputSource {
   type: string;
   baseDir?: string;
@@ -43,7 +55,9 @@ export interface InputSource {
   uris?: string[];
   prefixes?: string[];
   objects?: { bucket: string; path: string }[];
+  objectGlob?: string;
   fetchTimeout?: number;
+  systemFields?: string[];
 
   // druid
   dataSource?: string;
@@ -82,7 +96,7 @@ export type InputSourceDesc =
       dataSource: string;
       interval: string;
       filter?: any;
-      dimensions?: string[]; // ToDo: these are not in the docs https://druid.apache.org/docs/latest/ingestion/input-sources.html
+      dimensions?: string[]; // ToDo: these are not in the docs https://druid.apache.org/docs/latest/ingestion/input-sources
       metrics?: string[];
       maxInputSegmentBytesPerTask?: number;
     }
@@ -93,10 +107,11 @@ export type InputSourceDesc =
       httpAuthenticationPassword?: any;
     }
   | {
-      type: 's3';
+      type: 's3' | 'google' | 'azureStorage';
       uris?: string[];
       prefixes?: string[];
       objects?: { bucket: string; path: string }[];
+      objectGlob?: string;
       properties?: {
         accessKeyId?: any;
         secretAccessKey?: any;
@@ -105,18 +120,13 @@ export type InputSourceDesc =
       };
     }
   | {
-      type: 'google' | 'azure';
-      uris?: string[];
-      prefixes?: string[];
-      objects?: { bucket: string; path: string }[];
-    }
-  | {
       type: 'hdfs';
       paths?: string | string[];
     }
   | {
       type: 'delta';
-      tablePath?: string;
+      tablePath: string;
+      filter?: string;
     }
   | {
       type: 'sql';
@@ -154,7 +164,7 @@ export function issueWithInputSource(inputSource: InputSource | undefined): stri
       return;
 
     case 's3':
-    case 'azure':
+    case 'azureStorage':
     case 'google':
       if (
         !nonEmptyArray(inputSource.uris) &&
@@ -188,7 +198,7 @@ const KNOWN_TYPES = [
   'http',
   'local',
   's3',
-  'azure',
+  'azureStorage',
   'delta',
   'google',
   'hdfs',
@@ -253,9 +263,7 @@ export const INPUT_SOURCE_FIELDS: Field<InputSource>[] = [
     required: true,
     info: (
       <>
-        <ExternalLink href={`${getLink('DOCS')}/ingestion/native-batch.html#input-sources`}>
-          baseDir
-        </ExternalLink>
+        <ExternalLink href={`${getLink('DOCS')}/ingestion/input-sources`}>baseDir</ExternalLink>
         <p>Specifies the directory to search recursively for files to be ingested.</p>
       </>
     ),
@@ -269,12 +277,12 @@ export const INPUT_SOURCE_FIELDS: Field<InputSource>[] = [
     suggestions: FILTER_SUGGESTIONS,
     info: (
       <>
-        <ExternalLink href={`${getLink('DOCS')}/ingestion/native-batch.html#local-input-source`}>
+        <ExternalLink href={`${getLink('DOCS')}/ingestion/native-batch#local-input-source`}>
           filter
         </ExternalLink>
         <p>
           A wildcard filter for files. See{' '}
-          <ExternalLink href="https://commons.apache.org/proper/commons-io/apidocs/org/apache/commons/io/filefilter/WildcardFileFilter.html">
+          <ExternalLink href="https://commons.apache.org/proper/commons-io/apidocs/org/apache/commons/io/filefilter/WildcardFileFilter">
             here
           </ExternalLink>{' '}
           for format information.
@@ -333,7 +341,7 @@ export const INPUT_SOURCE_FIELDS: Field<InputSource>[] = [
       <>
         <p>
           JSON array of{' '}
-          <ExternalLink href={`${getLink('DOCS')}/development/extensions-core/s3.html`}>
+          <ExternalLink href={`${getLink('DOCS')}/ingestion/input-sources#s3-input-source`}>
             S3 Objects
           </ExternalLink>
           .
@@ -349,9 +357,10 @@ export const INPUT_SOURCE_FIELDS: Field<InputSource>[] = [
     name: 'uris',
     label: 'Azure URIs',
     type: 'string-array',
-    placeholder: 'azure://your-container/some-file1.ext, azure://your-container/some-file2.ext',
+    placeholder:
+      'azureStorage://your-storage-account/your-container/some-file1.ext, azureStorage://your-storage-account/your-container/some-file2.ext',
     defined: inputSource =>
-      inputSource.type === 'azure' &&
+      inputSource.type === 'azureStorage' &&
       !deepGet(inputSource, 'prefixes') &&
       !deepGet(inputSource, 'objects'),
     required: true,
@@ -369,9 +378,10 @@ export const INPUT_SOURCE_FIELDS: Field<InputSource>[] = [
     name: 'prefixes',
     label: 'Azure prefixes',
     type: 'string-array',
-    placeholder: 'azure://your-container/some-path1, azure://your-container/some-path2',
+    placeholder:
+      'azureStorage://your-storage-account/your-container/some-path1, azureStorage://your-storage-account/your-container/some-path2',
     defined: inputSource =>
-      inputSource.type === 'azure' &&
+      inputSource.type === 'azureStorage' &&
       !deepGet(inputSource, 'uris') &&
       !deepGet(inputSource, 'objects'),
     required: true,
@@ -386,14 +396,14 @@ export const INPUT_SOURCE_FIELDS: Field<InputSource>[] = [
     name: 'objects',
     label: 'Azure objects',
     type: 'json',
-    placeholder: '{"bucket":"your-container", "path":"some-file.ext"}',
-    defined: inputSource => inputSource.type === 'azure' && deepGet(inputSource, 'objects'),
+    placeholder: '{"bucket":"your-storage-account", "path":"your-container/some-file.ext"}',
+    defined: inputSource => inputSource.type === 'azureStorage' && deepGet(inputSource, 'objects'),
     required: true,
     info: (
       <>
         <p>
           JSON array of{' '}
-          <ExternalLink href={`${getLink('DOCS')}/development/extensions-core/azure.html`}>
+          <ExternalLink href={`${getLink('DOCS')}/ingestion/input-sources#azure-input-source`}>
             S3 Objects
           </ExternalLink>
           .
@@ -402,7 +412,22 @@ export const INPUT_SOURCE_FIELDS: Field<InputSource>[] = [
       </>
     ),
   },
-
+  {
+    name: 'properties.sharedAccessStorageToken',
+    label: 'Shared Access Storage Token',
+    type: 'string',
+    placeholder: '(sas token)',
+    defined: inputSource => inputSource.type === 'azureStorage',
+    info: (
+      <>
+        <p>Shared Access Storage Token for this storage account.</p>
+        <p>
+          Note: Inlining the sas token into the ingestion spec can be dangerous as it might appear
+          in server log files and can be seen by anyone accessing this console.
+        </p>
+      </>
+    ),
+  },
   // google
   {
     name: 'uris',
@@ -452,7 +477,9 @@ export const INPUT_SOURCE_FIELDS: Field<InputSource>[] = [
       <>
         <p>
           JSON array of{' '}
-          <ExternalLink href={`${getLink('DOCS')}/development/extensions-core/google.html`}>
+          <ExternalLink
+            href={`${getLink('DOCS')}/ingestion/input-sources#google-cloud-storage-input-source`}
+          >
             Google Cloud Storage Objects
           </ExternalLink>
           .
@@ -464,21 +491,28 @@ export const INPUT_SOURCE_FIELDS: Field<InputSource>[] = [
 
   // Cloud common
   {
-    name: 'filter',
-    label: 'File filter',
+    name: 'objectGlob',
     type: 'string',
-    suggestions: FILTER_SUGGESTIONS,
-    placeholder: '*',
-    defined: typeIsKnown(KNOWN_TYPES, 's3', 'azure', 'google'),
+    suggestions: OBJECT_GLOB_SUGGESTIONS,
+    placeholder: '(all files)',
+    defined: typeIsKnown(KNOWN_TYPES, 's3', 'azureStorage', 'google'),
     info: (
-      <p>
-        A wildcard filter for files. See{' '}
-        <ExternalLink href="https://commons.apache.org/proper/commons-io/apidocs/org/apache/commons/io/filefilter/WildcardFileFilter.html">
-          here
-        </ExternalLink>{' '}
-        for format information. Files matching the filter criteria are considered for ingestion.
-        Files not matching the filter criteria are ignored.
-      </p>
+      <>
+        <p>A glob for the object part of the URI.</p>
+        <p>
+          The glob must match the entire object part, not just the filename. For example, the glob
+          <Code>*.json</Code> does not match <Code>/bar/file.json</Code>, because and the{' '}
+          <Code>*</Code> does not match the slash. To match all objects ending in <Code>.json</Code>
+          , use <Code>**.json</Code> instead.
+        </p>
+        <p>
+          For more information, refer to the documentation for{' '}
+          <ExternalLink href="https://docs.oracle.com/en/java/javase/11/docs/api/java.base/java/nio/file/FileSystem.html#getPathMatcher(java.lang.String)">
+            FileSystem#getPathMatcher
+          </ExternalLink>
+          .
+        </p>
+      </>
     ),
   },
 
@@ -606,6 +640,34 @@ export const INPUT_SOURCE_FIELDS: Field<InputSource>[] = [
     placeholder: '/path/to/deltaTable',
     defined: typeIsKnown(KNOWN_TYPES, 'delta'),
     required: true,
+    info: <p>A full path to the Delta Lake table.</p>,
+  },
+  {
+    name: 'filter',
+    label: 'Delta filter',
+    type: 'json',
+    placeholder: '{"type": "=", "column": "name", "value": "foo"}',
+    defined: typeIsKnown(KNOWN_TYPES, 'delta'),
+    info: (
+      <>
+        <ExternalLink href={`${getLink('DOCS')}/ingestion/input-sources/#delta-filter-object`}>
+          filter
+        </ExternalLink>
+        <p>A Delta filter json object to filter Delta Lake scan files.</p>
+      </>
+    ),
+  },
+  {
+    name: 'snapshotVersion',
+    label: 'Delta snapshot version',
+    type: 'number',
+    placeholder: '(latest)',
+    defined: typeIsKnown(KNOWN_TYPES, 'delta'),
+    info: (
+      <>
+        The snapshot version to read from the Delta table. By default, the latest snapshot is read.
+      </>
+    ),
   },
 
   // sql

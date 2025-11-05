@@ -30,10 +30,16 @@ import org.apache.druid.common.guava.FutureUtils;
 import org.apache.druid.common.utils.IdUtils;
 import org.apache.druid.indexer.TaskStatus;
 import org.apache.druid.indexer.TaskStatusPlus;
+import org.apache.druid.indexer.report.TaskReport;
+import org.apache.druid.indexing.overlord.supervisor.SupervisorSpec;
 import org.apache.druid.indexing.overlord.supervisor.SupervisorStatus;
 import org.apache.druid.java.util.common.parsers.CloseableIterator;
 import org.apache.druid.metadata.LockFilterPolicy;
 import org.apache.druid.rpc.ServiceRetryPolicy;
+import org.apache.druid.rpc.UpdateResponse;
+import org.apache.druid.server.coordinator.ClusterCompactionConfig;
+import org.apache.druid.server.http.SegmentsToUpdateFilter;
+import org.apache.druid.timeline.SegmentId;
 import org.joda.time.DateTime;
 import org.joda.time.Interval;
 
@@ -83,6 +89,8 @@ public interface OverlordClient
    * @param interval   Umbrella interval to be considered by the kill task. Note that unused segments falling in this
    *                   widened umbrella interval may have different {@code used_status_last_updated} time, so the kill task
    *                   should also filter by {@code maxUsedStatusLastUpdatedTime}
+   * @param versions   An optional list of segment versions to kill in the given {@code interval}. If unspecified, all
+   *                   versions of segments in the {@code interval} must be killed.
    * @param maxSegmentsToKill  The maximum number of segments to kill
    * @param maxUsedStatusLastUpdatedTime The maximum {@code used_status_last_updated} time. Any unused segment in {@code interval}
    *                                   with {@code used_status_last_updated} no later than this time will be included in the
@@ -95,6 +103,7 @@ public interface OverlordClient
       String idPrefix,
       String dataSource,
       Interval interval,
+      @Nullable List<String> versions,
       @Nullable Integer maxSegmentsToKill,
       @Nullable DateTime maxUsedStatusLastUpdatedTime
   )
@@ -104,7 +113,7 @@ public interface OverlordClient
         taskId,
         dataSource,
         interval,
-        false,
+        versions,
         null,
         maxSegmentsToKill,
         maxUsedStatusLastUpdatedTime
@@ -162,13 +171,31 @@ public interface OverlordClient
    * Returns a {@link org.apache.druid.rpc.HttpResponseException} with code
    * {@link javax.ws.rs.core.Response.Status#NOT_FOUND} if there is no report available for some reason.
    */
-  ListenableFuture<Map<String, Object>> taskReportAsMap(String taskId);
+  ListenableFuture<TaskReport.ReportMap> taskReportAsMap(String taskId);
 
   /**
    * Returns the payload for a task as an instance of {@link ClientTaskQuery}. This method only works for tasks
    * that have a {@link ClientTaskQuery} model or are subclasses of {@link ClientTaskQuery}.
    */
   ListenableFuture<TaskPayloadResponse> taskPayload(String taskId);
+
+  /**
+   * Submits a supervisor spec to the Overlord.
+   * <p>
+   * API: {@code /druid/indexer/v1/supervisor}
+   *
+   * @return Map containing a single entry "id"
+   */
+  ListenableFuture<Map<String, String>> postSupervisor(SupervisorSpec supervisor);
+
+  /**
+   * Shuts down a supervisor.
+   * <p>
+   * API: {@code /druid/indexer/v1/supervisor/<id>/terminate}
+   *
+   * @return Map containing a single entry "id"
+   */
+  ListenableFuture<Map<String, String>> terminateSupervisor(String supervisorId);
 
   /**
    * Returns all current supervisor statuses.
@@ -207,6 +234,82 @@ public interface OverlordClient
    * Returns total worker capacity details.
    */
   ListenableFuture<IndexingTotalWorkerCapacityInfo> getTotalWorkerCapacity();
+
+  /**
+   * Checks if compaction supervisors are enabled on the Overlord.
+   * When this returns true, the Coordinator does not run CompactSegments duty.
+   * <p>
+   * API: {@code GET /druid/indexer/v1/compaction/isSupervisorEnabled}
+   */
+  ListenableFuture<Boolean> isCompactionSupervisorEnabled();
+
+  /**
+   * Gets the current cluster-level compaction config.
+   * <p>
+   * API: {@code GET /druid/indexer/v1/compaction/config/cluster}
+   */
+  ListenableFuture<ClusterCompactionConfig> getClusterCompactionConfig();
+
+  /**
+   * Gets the current cluster-level compaction config.
+   * <p>
+   * API: {@code POST /druid/indexer/v1/compaction/config/cluster}
+   *
+   * @return {@link UpdateResponse} containing the success status of this operation.
+   */
+  ListenableFuture<UpdateResponse> updateClusterCompactionConfig(ClusterCompactionConfig config);
+
+  /**
+   * Marks all non-overshadowed segments of the datasource as used.
+   * <p>
+   * API: {@code POST /druid/indexer/v1/datasources/{dataSourceName}}
+   */
+  ListenableFuture<SegmentUpdateResponse> markNonOvershadowedSegmentsAsUsed(String dataSource);
+
+  /**
+   * Marks non-overshadowed segments that satisfy the given filter as used.
+   * <p>
+   * API: {@code POST /druid/indexer/v1/datasources/{dataSourceName}/markUsed}
+   *
+   * @param filter Must be non-null
+   */
+  ListenableFuture<SegmentUpdateResponse> markNonOvershadowedSegmentsAsUsed(
+      String dataSource,
+      SegmentsToUpdateFilter filter
+  );
+
+  /**
+   * Marks the given segment as used.
+   * <p>
+   * API: {@code POST /druid/indexer/v1/datasources/{dataSourceName}/segments/{segmentId}}
+   */
+  ListenableFuture<SegmentUpdateResponse> markSegmentAsUsed(SegmentId segmentId);
+
+  /**
+   * Marks all non-overshadowed segments of the datasource as unused.
+   * <p>
+   * API: {@code DELETE /druid/indexer/v1/datasources/{dataSourceName}}
+   */
+  ListenableFuture<SegmentUpdateResponse> markSegmentsAsUnused(String dataSource);
+
+  /**
+   * Marks non-overshadowed segments that satisfy the given filter as unused.
+   * <p>
+   * API: {@code POST /druid/indexer/v1/datasources/{dataSourceName}/markUnused}
+   *
+   * @param filter Must be non-null
+   */
+  ListenableFuture<SegmentUpdateResponse> markSegmentsAsUnused(
+      String dataSource,
+      SegmentsToUpdateFilter filter
+  );
+
+  /**
+   * Marks the given segment as unused.
+   * <p>
+   * API: {@code DELETE /druid/indexer/v1/datasources/{dataSourceName}/segments/{segmentId}}
+   */
+  ListenableFuture<SegmentUpdateResponse> markSegmentAsUnused(SegmentId segmentId);
 
   /**
    * Returns a copy of this client with a different retry policy.

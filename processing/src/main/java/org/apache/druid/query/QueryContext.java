@@ -19,16 +19,21 @@
 
 package org.apache.druid.query;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonInclude.Include;
+import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.druid.java.util.common.HumanReadableBytes;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.java.util.common.granularity.Granularity;
 import org.apache.druid.query.QueryContexts.Vectorize;
-import org.apache.druid.segment.QueryableIndexStorageAdapter;
+import org.apache.druid.query.filter.InDimFilter;
+import org.apache.druid.query.filter.TypedInFilter;
 
 import javax.annotation.Nullable;
-
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
@@ -55,8 +60,11 @@ public class QueryContext
 {
   private static final QueryContext EMPTY = new QueryContext(null);
 
+  @JsonInclude(value = Include.NON_NULL)
+  @JsonValue
   private final Map<String, Object> context;
 
+  @JsonCreator
   public QueryContext(Map<String, Object> context)
   {
     // There is no semantic difference between an empty and a null context.
@@ -340,7 +348,7 @@ public class QueryContext
 
   public int getVectorSize()
   {
-    return getVectorSize(QueryableIndexStorageAdapter.DEFAULT_VECTOR_SIZE);
+    return getVectorSize(QueryContexts.DEFAULT_VECTOR_SIZE);
   }
 
   public int getVectorSize(int defaultSize)
@@ -366,6 +374,11 @@ public class QueryContext
   public boolean isUseNestedForUnknownTypeInSubquery(boolean defaultUseNestedForUnkownTypeInSubquery)
   {
     return getBoolean(QueryContexts.USE_NESTED_FOR_UNKNOWN_TYPE_IN_SUBQUERY, defaultUseNestedForUnkownTypeInSubquery);
+  }
+
+  public boolean isUseNestedForUnknownTypeInSubquery()
+  {
+    return isUseNestedForUnknownTypeInSubquery(QueryContexts.DEFAULT_USE_NESTED_FOR_UNKNOWN_TYPE_IN_SUBQUERY);
   }
 
   public int getUncoveredIntervalsLimit()
@@ -458,6 +471,15 @@ public class QueryContext
     return getLong(QueryContexts.MAX_SCATTER_GATHER_BYTES_KEY, Long.MAX_VALUE);
   }
 
+  public String getEngine()
+  {
+    return QueryContexts.parseString(
+        context,
+        QueryContexts.ENGINE,
+        QueryContexts.DEFAULT_ENGINE
+    );
+  }
+
   public boolean hasTimeout()
   {
     return getTimeout() != QueryContexts.NO_TIMEOUT;
@@ -481,6 +503,15 @@ public class QueryContext
             timeout
         )
     );
+  }
+
+  @Nullable
+  public Duration getTimeoutDuration()
+  {
+    if (hasTimeout()) {
+      return Duration.ofMillis(getTimeout());
+    }
+    return null;
   }
 
   public long getDefaultTimeout()
@@ -511,6 +542,32 @@ public class QueryContext
           )
       );
     }
+  }
+
+  public long getPerSegmentTimeout()
+  {
+    return getPerSegmentTimeout(QueryContexts.NO_TIMEOUT);
+  }
+
+  public long getPerSegmentTimeout(long defaultPerSegmentTimeout)
+  {
+    final long timeout = getLong(QueryContexts.PER_SEGMENT_TIMEOUT_KEY, defaultPerSegmentTimeout);
+    if (timeout >= 0) {
+      return timeout;
+    }
+
+    throw new BadQueryContextException(
+        StringUtils.format(
+            "Per-segment timeout [%s] must be a non negative value, but was [%d]",
+            QueryContexts.PER_SEGMENT_TIMEOUT_KEY,
+            timeout
+        )
+    );
+  }
+
+  public boolean usePerSegmentTimeout()
+  {
+    return getPerSegmentTimeout() != QueryContexts.NO_TIMEOUT;
   }
 
   public void verifyMaxScatterGatherBytes(long maxScatterGatherBytesLimit)
@@ -546,6 +603,15 @@ public class QueryContext
     );
   }
 
+  public CloneQueryMode getCloneQueryMode()
+  {
+    return getEnum(
+        QueryContexts.CLONE_QUERY_MODE,
+        CloneQueryMode.class,
+        QueryContexts.DEFAULT_CLONE_QUERY_MODE
+    );
+  }
+
   public boolean getEnableRewriteJoinToFilter()
   {
     return getBoolean(
@@ -575,6 +641,35 @@ public class QueryContext
     );
   }
 
+  /**
+   * At or above this threshold number of values, when planning SQL queries, use the SQL SCALAR_IN_ARRAY operator rather
+   * than a stack of SQL ORs. This speeds up planning for large sets of points because it is opaque to various
+   * expensive optimizations. But, because this does bypass certain optimizations, we only do the transformation above
+   * a certain threshold. The SCALAR_IN_ARRAY operator is still able to convert to {@link InDimFilter} or
+   * {@link TypedInFilter}.
+   */
+  public int getInFunctionThreshold()
+  {
+    return getInt(
+        QueryContexts.IN_FUNCTION_THRESHOLD,
+        QueryContexts.DEFAULT_IN_FUNCTION_THRESHOLD
+    );
+  }
+
+  /**
+   * At or above this threshold, when converting the SEARCH operator to a native expression, use the "scalar_in_array"
+   * function rather than a sequence of equals (==) separated by or (||). This is typically a lower threshold
+   * than {@link #getInFunctionThreshold()}, because it does not prevent any SQL planning optimizations, and it
+   * speeds up query execution.
+   */
+  public int getInFunctionExprThreshold()
+  {
+    return getInt(
+        QueryContexts.IN_FUNCTION_EXPR_THRESHOLD,
+        QueryContexts.DEFAULT_IN_FUNCTION_EXPR_THRESHOLD
+    );
+  }
+
   public boolean isTimeBoundaryPlanningEnabled()
   {
     return getBoolean(
@@ -583,14 +678,38 @@ public class QueryContext
     );
   }
 
-  public boolean isWindowingStrictValidation()
+  public boolean isCatalogValidationEnabled()
   {
     return getBoolean(
-        QueryContexts.WINDOWING_STRICT_VALIDATION,
-        QueryContexts.DEFAULT_WINDOWING_STRICT_VALIDATION
+        QueryContexts.CATALOG_VALIDATION_ENABLED,
+        QueryContexts.DEFAULT_CATALOG_VALIDATION_ENABLED
     );
   }
 
+  public boolean isExtendedFilteredSumRewrite()
+  {
+    return getBoolean(
+        QueryContexts.EXTENDED_FILTERED_SUM_REWRITE_ENABLED,
+        QueryContexts.DEFAULT_EXTENDED_FILTERED_SUM_REWRITE_ENABLED
+    );
+  }
+
+  /**
+   * Returns true if {@link QueryContexts#CTX_FULL_REPORT} is set to true, false if it is set to false or not set.
+   */
+  public boolean getFullReport()
+  {
+    return getBoolean(
+        QueryContexts.CTX_FULL_REPORT,
+        QueryContexts.DEFAULT_CTX_FULL_REPORT
+    );
+  }
+
+
+  public QueryResourceId getQueryResourceId()
+  {
+    return new QueryResourceId(getString(QueryContexts.QUERY_RESOURCE_ID));
+  }
 
   public String getBrokerServiceName()
   {
@@ -622,5 +741,40 @@ public class QueryContext
     return "QueryContext{" +
            "context=" + context +
            '}';
+  }
+
+  public boolean isDecoupledMode()
+  {
+    String value = getString(
+        QueryContexts.CTX_NATIVE_QUERY_SQL_PLANNING_MODE,
+        QueryContexts.NATIVE_QUERY_SQL_PLANNING_MODE_COUPLED
+    );
+    return QueryContexts.NATIVE_QUERY_SQL_PLANNING_MODE_DECOUPLED.equals(value);
+  }
+
+  public QueryContext override(Map<String, Object> contextOverride)
+  {
+    if (contextOverride == null || contextOverride.isEmpty()) {
+      return this;
+    }
+    return QueryContext.of(QueryContexts.override(asMap(), contextOverride));
+  }
+
+  public QueryContext override(QueryContext queryContext)
+  {
+    if (queryContext == null || queryContext.isEmpty()) {
+      return this;
+    }
+    return override(queryContext.asMap());
+  }
+
+  public boolean isPrePlanned()
+  {
+    return getBoolean(QueryContexts.CTX_PREPLANNED, QueryContexts.DEFAULT_PREPLANNED);
+  }
+
+  public boolean isRealtimeSegmentsOnly()
+  {
+    return getBoolean(QueryContexts.REALTIME_SEGMENTS_ONLY, QueryContexts.DEFAULT_REALTIME_SEGMENTS_ONLY);
   }
 }

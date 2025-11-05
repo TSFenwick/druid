@@ -16,13 +16,14 @@
  * limitations under the License.
  */
 
-import { Button, ButtonGroup, Code, Intent, Label, MenuItem, Switch } from '@blueprintjs/core';
+import { Button, ButtonGroup, Intent, Label, MenuItem, Switch, Tag } from '@blueprintjs/core';
 import { IconNames } from '@blueprintjs/icons';
-import { C, L, SqlComparison, SqlExpression } from '@druid-toolkit/query';
-import classNames from 'classnames';
+import dayjs from 'dayjs';
+import { C, L, SqlComparison, SqlExpression } from 'druid-query-toolkit';
 import * as JSONBig from 'json-bigint-native';
+import type { ReactNode } from 'react';
 import React from 'react';
-import type { Filter } from 'react-table';
+import type { Filter, SortingRule } from 'react-table';
 import ReactTable from 'react-table';
 
 import {
@@ -34,34 +35,42 @@ import {
   MoreButton,
   RefreshButton,
   SegmentTimeline,
+  SplitterLayout,
   TableClickableCell,
   TableColumnSelector,
+  type TableColumnSelectorColumn,
   TableFilterableCell,
   ViewControlBar,
 } from '../../components';
 import { AsyncActionDialog } from '../../dialogs';
 import { SegmentTableActionDialog } from '../../dialogs/segments-table-action-dialog/segment-table-action-dialog';
 import { ShowValueDialog } from '../../dialogs/show-value-dialog/show-value-dialog';
-import type { QueryWithContext } from '../../druid-models';
+import type { QueryContext, QueryWithContext, ShardSpec } from '../../druid-models';
+import { computeSegmentTimeSpan, getConsoleViewIcon, getDatasourceColor } from '../../druid-models';
 import type { Capabilities, CapabilitiesMode } from '../../helpers';
 import {
   booleanCustomTableFilter,
   BooleanFilterInput,
+  combineModeAndNeedle,
   parseFilterModeAndNeedle,
   sqlQueryCustomTableFilter,
   STANDARD_TABLE_PAGE_SIZE,
   STANDARD_TABLE_PAGE_SIZE_OPTIONS,
 } from '../../react-table';
 import { Api } from '../../singletons';
-import type { NumberLike } from '../../utils';
+import type { AuxiliaryQueryFn, NumberLike, TableState } from '../../utils';
 import {
+  applySorting,
+  assemble,
   compact,
   countBy,
-  deepGet,
   filterMap,
+  findMap,
   formatBytes,
+  formatDate,
   formatInteger,
-  hasPopoverOpen,
+  getApiArray,
+  hasOverlayOpen,
   isNumberLikeNaN,
   LocalStorageBackedVisibility,
   LocalStorageKeys,
@@ -69,13 +78,15 @@ import {
   queryDruidSql,
   QueryManager,
   QueryState,
+  ResultWithAuxiliaryWork,
+  sortedToOrderByClause,
   twoLines,
 } from '../../utils';
 import type { BasicAction } from '../../utils/basic-action';
 
 import './segments-view.scss';
 
-const tableColumns: Record<CapabilitiesMode, string[]> = {
+const TABLE_COLUMNS_BY_MODE: Record<CapabilitiesMode, TableColumnSelectorColumn[]> = {
   'full': [
     'Segment ID',
     'Datasource',
@@ -96,17 +107,6 @@ const tableColumns: Record<CapabilitiesMode, string[]> = {
     'Is realtime',
     'Is published',
     'Is overshadowed',
-    ACTION_COLUMN_LABEL,
-  ],
-  'no-sql': [
-    'Segment ID',
-    'Datasource',
-    'Start',
-    'End',
-    'Version',
-    'Partition',
-    'Size',
-    ACTION_COLUMN_LABEL,
   ],
   'no-proxy': [
     'Segment ID',
@@ -114,6 +114,7 @@ const tableColumns: Record<CapabilitiesMode, string[]> = {
     'Start',
     'End',
     'Version',
+    'Time span',
     'Shard type',
     'Shard spec',
     'Partition',
@@ -128,27 +129,84 @@ const tableColumns: Record<CapabilitiesMode, string[]> = {
     'Is published',
     'Is overshadowed',
   ],
+  'no-sql': [
+    'Segment ID',
+    'Datasource',
+    'Start',
+    'End',
+    'Version',
+    'Time span',
+    'Shard type',
+    'Shard spec',
+    'Partition',
+    'Size',
+    'Replication factor',
+    'Is realtime',
+    'Is overshadowed',
+  ],
 };
+
+function maybeParseJsonBig(str: string): any {
+  try {
+    return JSONBig.parse(str);
+  } catch {
+    return undefined;
+  }
+}
 
 function formatRangeDimensionValue(dimension: any, value: any): string {
   return `${C(String(dimension))}=${L(String(value))}`;
 }
 
-interface Sorted {
-  id: string;
-  desc: boolean;
-}
+function segmentFiltersToExpression(filters: Filter[]): SqlExpression {
+  return SqlExpression.and(
+    ...filterMap(filters, filter => {
+      if (filter.id === 'start' || filter.id === 'end') {
+        // Dates need to be converted to ISO string for the SQL query
+        const modeAndNeedle = parseFilterModeAndNeedle(filter);
+        if (!modeAndNeedle) return;
+        if (modeAndNeedle.mode === '~') {
+          return sqlQueryCustomTableFilter(filter);
+        }
+        const internalFilter = { ...filter };
+        const formattedDate = formatDate(modeAndNeedle.needle);
+        const filterDate = dayjs(formattedDate).toISOString();
+        filter.value = combineModeAndNeedle(modeAndNeedle.mode, formattedDate);
+        internalFilter.value = combineModeAndNeedle(modeAndNeedle.mode, filterDate);
+        return sqlQueryCustomTableFilter(internalFilter);
+      }
+      if (filter.id === 'shard_type') {
+        // Special handling for shard_type that needs to be searched for in the shard_spec
+        // Creates filters like `shard_spec LIKE '%"type":"numbered"%'`
+        const modeAndNeedle = parseFilterModeAndNeedle(filter);
+        if (!modeAndNeedle) return;
+        const shardSpecColumn = C('shard_spec');
+        switch (modeAndNeedle.mode) {
+          case '=':
+            return SqlComparison.like(shardSpecColumn, `%"type":"${modeAndNeedle.needle}"%`);
 
-function sortedToOrderByClause(sorted: Sorted[]): string | undefined {
-  if (!sorted.length) return;
-  return 'ORDER BY ' + sorted.map(sort => `${C(sort.id)} ${sort.desc ? 'DESC' : 'ASC'}`).join(', ');
-}
+          case '!=':
+            return SqlComparison.notLike(shardSpecColumn, `%"type":"${modeAndNeedle.needle}"%`);
 
-interface TableState {
-  page: number;
-  pageSize: number;
-  filtered: Filter[];
-  sorted: Sorted[];
+          default:
+            return SqlComparison.like(shardSpecColumn, `%"type":"${modeAndNeedle.needle}%`);
+        }
+      } else if (filter.id.startsWith('is_')) {
+        switch (filter.value) {
+          case '=false':
+            return C(filter.id).equal(0);
+
+          case '=true':
+            return C(filter.id).equal(1);
+
+          default:
+            return;
+        }
+      } else {
+        return sqlQueryCustomTableFilter(filter);
+      }
+    }),
+  );
 }
 
 interface SegmentsQuery extends TableState {
@@ -164,8 +222,7 @@ interface SegmentQueryResultRow {
   interval: string;
   segment_id: string;
   version: string;
-  time_span: string;
-  shard_spec: string;
+  shard_spec: ShardSpec;
   partition_num: number;
   size: number;
   num_rows: NumberLike;
@@ -179,6 +236,11 @@ interface SegmentQueryResultRow {
   is_overshadowed: number;
 }
 
+interface SegmentsWithAuxiliaryInfo {
+  readonly segments: SegmentQueryResultRow[];
+  readonly count: number;
+}
+
 export interface SegmentsViewProps {
   filters: Filter[];
   onFiltersChange(filters: Filter[]): void;
@@ -187,37 +249,32 @@ export interface SegmentsViewProps {
 }
 
 export interface SegmentsViewState {
-  segmentsState: QueryState<SegmentQueryResultRow[]>;
+  segmentsState: QueryState<SegmentsWithAuxiliaryInfo>;
   segmentTableActionDialogId?: string;
   datasourceTableActionDialogId?: string;
   actions: BasicAction[];
-  terminateSegmentId?: string;
-  terminateDatasourceId?: string;
+
   visibleColumns: LocalStorageBackedVisibility;
   groupByInterval: boolean;
-  showSegmentTimeline: boolean;
+  showSegmentTimeline?: { capabilities: Capabilities; datasource?: string };
+  page: number;
+  pageSize: number;
+  sorted: SortingRule[];
+
+  terminateSegmentId?: string;
+  terminateDatasourceId?: string;
   showFullShardSpec?: string;
 }
 
 export class SegmentsView extends React.PureComponent<SegmentsViewProps, SegmentsViewState> {
   static baseQuery(visibleColumns: LocalStorageBackedVisibility) {
     const columns = compact([
-      visibleColumns.shown('Segment ID') && `"segment_id"`,
+      `"segment_id"`,
       visibleColumns.shown('Datasource') && `"datasource"`,
       `"start"`,
       `"end"`,
       `"version"`,
-      visibleColumns.shown('Time span') &&
-        `CASE
-  WHEN "start" = '-146136543-09-08T08:23:32.096Z' AND "end" = '146140482-04-24T15:36:27.903Z' THEN 'All'
-  WHEN "start" LIKE '%-01-01T00:00:00.000Z' AND "end" LIKE '%-01-01T00:00:00.000Z' THEN 'Year'
-  WHEN "start" LIKE '%-01T00:00:00.000Z' AND "end" LIKE '%-01T00:00:00.000Z' THEN 'Month'
-  WHEN "start" LIKE '%T00:00:00.000Z' AND "end" LIKE '%T00:00:00.000Z' THEN 'Day'
-  WHEN "start" LIKE '%:00:00.000Z' AND "end" LIKE '%:00:00.000Z' THEN 'Hour'
-  WHEN "start" LIKE '%:00.000Z' AND "end" LIKE '%:00.000Z' THEN 'Minute'
-  ELSE 'Sub minute'
-END AS "time_span"`,
-      (visibleColumns.shown('Shard type') || visibleColumns.shown('Shard spec')) && `"shard_spec"`,
+      visibleColumns.shown('Shard type', 'Shard spec') && `"shard_spec"`,
       visibleColumns.shown('Partition') && `"partition_num"`,
       visibleColumns.shown('Size') && `"size"`,
       visibleColumns.shown('Num rows') && `"num_rows"`,
@@ -235,33 +292,7 @@ END AS "time_span"`,
     return `WITH s AS (SELECT\n${columns.join(',\n')}\nFROM sys.segments)`;
   }
 
-  static computeTimeSpan(start: string, end: string): string {
-    if (start.endsWith('-01-01T00:00:00.000Z') && end.endsWith('-01-01T00:00:00.000Z')) {
-      return 'Year';
-    }
-
-    if (start.endsWith('-01T00:00:00.000Z') && end.endsWith('-01T00:00:00.000Z')) {
-      return 'Month';
-    }
-
-    if (start.endsWith('T00:00:00.000Z') && end.endsWith('T00:00:00.000Z')) {
-      return 'Day';
-    }
-
-    if (start.endsWith(':00:00.000Z') && end.endsWith(':00:00.000Z')) {
-      return 'Hour';
-    }
-
-    if (start.endsWith(':00.000Z') && end.endsWith(':00.000Z')) {
-      return 'Minute';
-    }
-
-    return 'Sub minute';
-  }
-
-  private readonly segmentsQueryManager: QueryManager<SegmentsQuery, SegmentQueryResultRow[]>;
-
-  private lastTableState: TableState | undefined;
+  private readonly segmentsQueryManager: QueryManager<SegmentsQuery, SegmentsWithAuxiliaryInfo>;
 
   constructor(props: SegmentsViewProps) {
     super(props);
@@ -271,60 +302,34 @@ END AS "time_span"`,
       segmentsState: QueryState.INIT,
       visibleColumns: new LocalStorageBackedVisibility(
         LocalStorageKeys.SEGMENT_TABLE_COLUMN_SELECTION,
-        ['Time span', 'Is published', 'Is overshadowed'],
+        ['Is published', 'Is overshadowed'],
       ),
       groupByInterval: false,
-      showSegmentTimeline: false,
+      page: 0,
+      pageSize: STANDARD_TABLE_PAGE_SIZE,
+      sorted: [
+        props.capabilities.hasSql()
+          ? { id: 'start', desc: true }
+          : { id: 'datasource', desc: false },
+      ],
     };
 
     this.segmentsQueryManager = new QueryManager({
       debounceIdle: 500,
-      processQuery: async (query: SegmentsQuery, _cancelToken, setIntermediateQuery) => {
+      processQuery: async (query: SegmentsQuery, signal, setIntermediateQuery) => {
         const { page, pageSize, filtered, sorted, visibleColumns, capabilities, groupByInterval } =
           query;
 
+        let segments: SegmentQueryResultRow[];
+        let count = -1;
+        const auxiliaryQueries: AuxiliaryQueryFn<SegmentsWithAuxiliaryInfo>[] = [];
+
         if (capabilities.hasSql()) {
-          const whereParts = filterMap(filtered, (f: Filter) => {
-            if (f.id === 'shard_type') {
-              // Special handling for shard_type that needs to be search in the shard_spec
-              // Creates filters like `shard_spec LIKE '%"type":"numbered"%'`
-              const modeAndNeedle = parseFilterModeAndNeedle(f);
-              if (!modeAndNeedle) return;
-              const shardSpecColumn = C('shard_spec');
-              switch (modeAndNeedle.mode) {
-                case '=':
-                  return SqlComparison.like(shardSpecColumn, `%"type":"${modeAndNeedle.needle}"%`);
-
-                case '!=':
-                  return SqlComparison.notLike(
-                    shardSpecColumn,
-                    `%"type":"${modeAndNeedle.needle}"%`,
-                  );
-
-                default:
-                  return SqlComparison.like(shardSpecColumn, `%"type":"${modeAndNeedle.needle}%`);
-              }
-            } else if (f.id.startsWith('is_')) {
-              switch (f.value) {
-                case '=false':
-                  return C(f.id).equal(0);
-
-                case '=true':
-                  return C(f.id).equal(1);
-
-                default:
-                  return;
-              }
-            } else {
-              return sqlQueryCustomTableFilter(f);
-            }
-          });
-
-          let queryParts: string[];
+          const whereExpression = segmentFiltersToExpression(filtered);
 
           let filterClause = '';
-          if (whereParts.length) {
-            filterClause = SqlExpression.and(...whereParts).toString();
+          if (whereExpression.toString() !== 'TRUE') {
+            filterClause = whereExpression.toString();
           }
 
           let effectiveSorted = sorted;
@@ -341,6 +346,8 @@ END AS "time_span"`,
           const base = SegmentsView.baseQuery(visibleColumns);
           const orderByClause = sortedToOrderByClause(effectiveSorted);
 
+          let queryParts: string[];
+          const sqlQueryContext: QueryContext = {};
           if (groupByInterval) {
             const innerQuery = compact([
               `SELECT "start", "end"`,
@@ -367,6 +374,9 @@ END AS "time_span"`,
               orderByClause,
               `LIMIT ${pageSize * 1000}`,
             ]);
+
+            // This is needed because there might be an IN filter with {pageSize} intervals, the number of which exceeds the default inFunctionThreshold, set it to something greater than the {pageSize}
+            sqlQueryContext.inFunctionThreshold = pageSize + 1;
           } else {
             queryParts = compact([
               base,
@@ -380,80 +390,100 @@ END AS "time_span"`,
           }
           const sqlQuery = queryParts.join('\n');
           setIntermediateQuery(sqlQuery);
-          return await queryDruidSql({ query: sqlQuery });
-        } else if (capabilities.hasCoordinatorAccess()) {
-          let datasourceList: string[] = (
-            await Api.instance.get('/druid/coordinator/v1/metadata/datasources')
-          ).data;
+          let result = await queryDruidSql({ query: sqlQuery, context: sqlQueryContext }, signal);
 
+          if (visibleColumns.shown('Shard type', 'Shard spec')) {
+            result = result.map(sr => ({
+              ...sr,
+              shard_spec: maybeParseJsonBig(sr.shard_spec),
+            }));
+          }
+
+          segments = result as SegmentQueryResultRow[];
+
+          auxiliaryQueries.push(async (segmentsWithAuxiliaryInfo, signal) => {
+            const sqlQuery = assemble(
+              'SELECT COUNT(*) AS "cnt"',
+              'FROM "sys"."segments"',
+              filterClause ? `WHERE ${filterClause}` : undefined,
+            ).join('\n');
+            const cnt: any = (
+              await queryDruidSql<{ cnt: number }>(
+                {
+                  query: sqlQuery,
+                },
+                signal,
+              )
+            )[0].cnt;
+            return {
+              ...segmentsWithAuxiliaryInfo,
+              count: typeof cnt === 'number' ? cnt : -1,
+            };
+          });
+        } else if (capabilities.hasCoordinatorAccess()) {
+          let datasourceList: string[] = [];
           const datasourceFilter = filtered.find(({ id }) => id === 'datasource');
           if (datasourceFilter) {
-            datasourceList = datasourceList.filter(datasource =>
+            datasourceList = (
+              await getApiArray('/druid/coordinator/v1/metadata/datasources', signal)
+            ).filter((datasource: string) =>
               booleanCustomTableFilter(datasourceFilter, datasource),
             );
           }
 
-          if (sorted.length && sorted[0].id === 'datasource') {
-            datasourceList.sort(
-              sorted[0].desc ? (d1, d2) => d1.localeCompare(d2) : (d1, d2) => d2.localeCompare(d1),
-            );
-          }
+          let results = (
+            await getApiArray(
+              `/druid/coordinator/v1/metadata/segments?includeOvershadowedStatus&includeRealtimeSegments${datasourceList
+                .map(d => `&datasources=${Api.encodePath(d)}`)
+                .join('')}`,
+              signal,
+            )
+          ).map((segment: any) => {
+            const [start, end] = segment.interval.split('/');
+            return {
+              segment_id: segment.identifier,
+              datasource: segment.dataSource,
+              start,
+              end,
+              interval: segment.interval,
+              version: segment.version,
+              shard_spec: segment.shardSpec,
+              partition_num: segment.shardSpec?.partitionNum || 0,
+              size: segment.size,
+              num_rows: -1,
+              avg_row_size: -1,
+              num_replicas: -1,
+              replication_factor: segment.replicationFactor,
+              is_available: -1,
+              is_active: -1,
+              is_realtime: Number(segment.realtime),
+              is_published: -1,
+              is_overshadowed: Number(segment.overshadowed),
+            };
+          });
 
-          const maxResults = (page + 1) * pageSize;
-          let results: SegmentQueryResultRow[] = [];
-
-          const n = Math.min(datasourceList.length, maxResults);
-          for (let i = 0; i < n && results.length < maxResults; i++) {
-            const segments = (
-              await Api.instance.get(
-                `/druid/coordinator/v1/datasources/${Api.encodePath(datasourceList[i])}?full`,
-              )
-            ).data?.segments;
-            if (!Array.isArray(segments)) continue;
-
-            let segmentQueryResultRows: SegmentQueryResultRow[] = segments.map((segment: any) => {
-              const [start, end] = segment.interval.split('/');
-              return {
-                segment_id: segment.identifier,
-                datasource: segment.dataSource,
-                start,
-                end,
-                interval: segment.interval,
-                version: segment.version,
-                time_span: SegmentsView.computeTimeSpan(start, end),
-                shard_spec: deepGet(segment, 'shardSpec'),
-                partition_num: deepGet(segment, 'shardSpec.partitionNum') || 0,
-                size: segment.size,
-                num_rows: -1,
-                avg_row_size: -1,
-                num_replicas: -1,
-                replication_factor: -1,
-                is_available: -1,
-                is_active: -1,
-                is_realtime: -1,
-                is_published: -1,
-                is_overshadowed: -1,
-              };
-            });
-
-            if (filtered.length) {
-              segmentQueryResultRows = segmentQueryResultRows.filter((d: SegmentQueryResultRow) => {
-                return filtered.every(filter => {
-                  return booleanCustomTableFilter(
-                    filter,
-                    d[filter.id as keyof SegmentQueryResultRow],
-                  );
-                });
+          if (filtered.length) {
+            results = results.filter((d: SegmentQueryResultRow) => {
+              return filtered.every(filter => {
+                return booleanCustomTableFilter(
+                  filter,
+                  d[filter.id as keyof SegmentQueryResultRow],
+                );
               });
-            }
-
-            results = results.concat(segmentQueryResultRows);
+            });
           }
 
-          return results.slice(page * pageSize, maxResults);
+          count = results.length;
+          const maxResults = (page + 1) * pageSize;
+          segments = applySorting(results, sorted).slice(page * pageSize, maxResults);
         } else {
           throw new Error('must have SQL or coordinator access to load this view');
         }
+
+        return new ResultWithAuxiliaryWork<SegmentsWithAuxiliaryInfo>(
+          { segments, count },
+          auxiliaryQueries,
+        );
       },
       onStateChange: segmentsState => {
         this.setState({
@@ -463,19 +493,54 @@ END AS "time_span"`,
     });
   }
 
+  componentDidMount() {
+    this.fetchData();
+  }
+
   componentWillUnmount(): void {
     this.segmentsQueryManager.terminate();
   }
 
-  private readonly fetchData = (groupByInterval: boolean, tableState?: TableState) => {
-    const { capabilities } = this.props;
-    const { visibleColumns } = this.state;
-    if (tableState) this.lastTableState = tableState;
-    const { page, pageSize, filtered, sorted } = this.lastTableState!;
+  componentDidUpdate(
+    prevProps: Readonly<SegmentsViewProps>,
+    prevState: Readonly<SegmentsViewState>,
+  ) {
+    const { filters } = this.props;
+    const { groupByInterval, page, pageSize, sorted } = this.state;
+    if (
+      !segmentFiltersToExpression(filters).equals(segmentFiltersToExpression(prevProps.filters)) ||
+      groupByInterval !== prevState.groupByInterval ||
+      page !== prevState.page ||
+      pageSize !== prevState.pageSize ||
+      sortedToOrderByClause(sorted) !== sortedToOrderByClause(prevState.sorted)
+    ) {
+      this.fetchData();
+    }
+  }
+
+  private readonly refresh = (auto: boolean): void => {
+    if (auto && hasOverlayOpen()) return;
+    this.segmentsQueryManager.rerunLastQuery(auto);
+
+    const { showSegmentTimeline } = this.state;
+    if (showSegmentTimeline) {
+      // Create a new capabilities object to force the segment timeline to re-render
+      this.setState(({ showSegmentTimeline }) => ({
+        showSegmentTimeline: {
+          ...showSegmentTimeline,
+          capabilities: this.props.capabilities.clone(),
+        },
+      }));
+    }
+  };
+
+  private readonly fetchData = () => {
+    const { capabilities, filters } = this.props;
+    const { visibleColumns, groupByInterval, page, pageSize, sorted } = this.state;
     this.segmentsQueryManager.runQuery({
       page,
       pageSize,
-      filtered,
+      filtered: filters,
       sorted,
       visibleColumns,
       capabilities,
@@ -483,14 +548,31 @@ END AS "time_span"`,
     });
   };
 
+  private readonly handleFilterChange = (filters: Filter[]) => {
+    this.goToFirstPage();
+    this.props.onFiltersChange(filters);
+  };
+
+  private goToFirstPage() {
+    if (this.state.page) {
+      this.setState({ page: 0 });
+    }
+  }
+
   private getSegmentActions(id: string, datasource: string): BasicAction[] {
+    const { capabilities } = this.props;
     const actions: BasicAction[] = [];
-    actions.push({
-      icon: IconNames.IMPORT,
-      title: 'Drop segment (disable)',
-      intent: Intent.DANGER,
-      onAction: () => this.setState({ terminateSegmentId: id, terminateDatasourceId: datasource }),
-    });
+
+    if (capabilities.hasOverlordAccess()) {
+      actions.push({
+        icon: IconNames.IMPORT,
+        title: 'Drop segment (disable)',
+        intent: Intent.DANGER,
+        onAction: () =>
+          this.setState({ terminateSegmentId: id, terminateDatasourceId: datasource }),
+      });
+    }
+
     return actions;
   }
 
@@ -502,27 +584,47 @@ END AS "time_span"`,
     });
   }
 
-  private renderFilterableCell(field: string, enableComparisons = false) {
-    const { filters, onFiltersChange } = this.props;
+  private renderFilterableCell(
+    field: string,
+    enableComparisons = false,
+    displayFn: (value: string) => ReactNode = String,
+    filterDisplayFn: (value: string) => string = String,
+  ) {
+    const { filters } = this.props;
+    const { handleFilterChange } = this;
 
-    return (row: { value: any }) => (
-      <TableFilterableCell
-        field={field}
-        value={row.value}
-        filters={filters}
-        onFiltersChange={onFiltersChange}
-        enableComparisons={enableComparisons}
-      >
-        {row.value}
-      </TableFilterableCell>
-    );
+    return function FilterableCell(row: { value: any }) {
+      return (
+        <TableFilterableCell
+          field={field}
+          value={row.value}
+          filters={filters}
+          onFiltersChange={handleFilterChange}
+          enableComparisons={enableComparisons}
+          displayValue={filterDisplayFn(row.value)}
+        >
+          {displayFn(row.value)}
+        </TableFilterableCell>
+      );
+    };
   }
 
   renderSegmentsTable() {
-    const { capabilities, filters, onFiltersChange } = this.props;
-    const { segmentsState, visibleColumns, groupByInterval } = this.state;
+    const { capabilities, filters } = this.props;
+    const {
+      segmentsState,
+      visibleColumns,
+      groupByInterval,
+      page,
+      pageSize,
+      sorted,
+      showSegmentTimeline,
+    } = this.state;
 
-    const segments = segmentsState.data || [];
+    const { segments, count } = segmentsState.data || {
+      segments: [],
+      count: -1,
+    };
 
     const sizeValues = segments.map(d => formatBytes(d.size)).concat('(realtime)');
 
@@ -542,7 +644,7 @@ END AS "time_span"`,
     return (
       <ReactTable
         data={segments}
-        pages={10000000} // Dummy, we are hiding the page selector
+        pages={count >= 0 ? Math.ceil(count / pageSize) : 10000000}
         loading={segmentsState.loading}
         noDataText={
           segmentsState.isEmpty()
@@ -552,27 +654,28 @@ END AS "time_span"`,
         manual
         filterable
         filtered={filters}
-        onFilteredChange={onFiltersChange}
-        defaultSorted={[hasSql ? { id: 'start', desc: true } : { id: 'datasource', desc: false }]}
-        onFetchData={tableState => {
-          this.fetchData(groupByInterval, tableState);
-        }}
-        showPageJump={false}
-        ofText=""
-        pivotBy={groupByInterval ? ['interval'] : []}
-        defaultPageSize={STANDARD_TABLE_PAGE_SIZE}
+        onFilteredChange={this.handleFilterChange}
+        sorted={sorted}
+        onSortedChange={sorted => this.setState({ sorted })}
+        page={page}
+        onPageChange={page => this.setState({ page })}
+        pageSize={pageSize}
+        onPageSizeChange={pageSize => this.setState({ pageSize })}
         pageSizeOptions={STANDARD_TABLE_PAGE_SIZE_OPTIONS}
         showPagination
+        showPageJump={false}
+        ofText={count >= 0 ? `of ${formatInteger(count)}` : ''}
+        pivotBy={groupByInterval ? ['interval'] : []}
         columns={[
           {
             Header: 'Segment ID',
             show: visibleColumns.shown('Segment ID'),
             accessor: 'segment_id',
             width: 280,
-            sortable: hasSql,
             filterable: allowGeneralFilter,
             Cell: row => (
               <TableClickableCell
+                tooltip="Show detail"
                 onClick={() => this.onDetail(row.value, row.row.datasource)}
                 hoverIcon={IconNames.SEARCH_TEMPLATE}
               >
@@ -585,14 +688,23 @@ END AS "time_span"`,
             show: visibleColumns.shown('Datasource'),
             accessor: 'datasource',
             width: 140,
-            Cell: this.renderFilterableCell('datasource'),
+            Cell: this.renderFilterableCell(
+              'datasource',
+              false,
+              showSegmentTimeline
+                ? value => (
+                    <>
+                      <span style={{ color: getDatasourceColor(value) }}>&#9632;</span> {value}
+                    </>
+                  )
+                : String,
+            ),
           },
           {
             Header: 'Interval',
             show: groupByInterval,
             accessor: 'interval',
             width: 120,
-            sortable: hasSql,
             defaultSortDesc: true,
             filterable: allowGeneralFilter,
             Cell: this.renderFilterableCell('interval'),
@@ -602,41 +714,40 @@ END AS "time_span"`,
             show: visibleColumns.shown('Start'),
             accessor: 'start',
             headerClassName: 'enable-comparisons',
-            width: 160,
-            sortable: hasSql,
+            width: 220,
             defaultSortDesc: true,
             filterable: allowGeneralFilter,
-            Cell: this.renderFilterableCell('start', true),
+            Cell: this.renderFilterableCell('start', true, formatDate, formatDate),
           },
           {
             Header: 'End',
             show: visibleColumns.shown('End'),
             accessor: 'end',
             headerClassName: 'enable-comparisons',
-            width: 160,
-            sortable: hasSql,
+            width: 220,
             defaultSortDesc: true,
             filterable: allowGeneralFilter,
-            Cell: this.renderFilterableCell('end', true),
+            Cell: this.renderFilterableCell('end', true, formatDate, formatDate),
           },
           {
             Header: 'Version',
             show: visibleColumns.shown('Version'),
             accessor: 'version',
-            width: 160,
-            sortable: hasSql,
+            width: 180,
             defaultSortDesc: true,
             filterable: allowGeneralFilter,
-            Cell: this.renderFilterableCell('version'),
+            Cell: this.renderFilterableCell('version', true),
           },
           {
             Header: 'Time span',
             show: visibleColumns.shown('Time span'),
-            accessor: 'time_span',
+            id: 'time_span',
+            className: 'padded',
+            accessor: ({ start, end }) =>
+              computeSegmentTimeSpan(dayjs(start).toISOString(), dayjs(end).toISOString()),
             width: 100,
-            sortable: hasSql,
-            filterable: allowGeneralFilter,
-            Cell: this.renderFilterableCell('time_span'),
+            sortable: false,
+            filterable: false,
           },
           {
             Header: 'Shard type',
@@ -644,14 +755,9 @@ END AS "time_span"`,
             id: 'shard_type',
             width: 100,
             sortable: false,
-            accessor: d => {
-              let v: any;
-              try {
-                v = JSONBig.parse(d.shard_spec);
-              } catch {}
-
-              if (typeof v?.type !== 'string') return '-';
-              return v?.type;
+            accessor: ({ shard_spec }) => {
+              if (typeof shard_spec?.type !== 'string') return '-';
+              return shard_spec?.type;
             },
             Cell: this.renderFilterableCell('shard_type', true),
           },
@@ -664,35 +770,33 @@ END AS "time_span"`,
             sortable: false,
             filterable: false,
             Cell: ({ value }) => {
-              let v: any;
-              try {
-                v = JSONBig.parse(value);
-              } catch {}
-
               const onShowFullShardSpec = () => {
                 this.setState({
                   showFullShardSpec:
-                    v && typeof v === 'object' ? JSONBig.stringify(v, undefined, 2) : String(value),
+                    value && typeof value === 'object'
+                      ? JSONBig.stringify(value, undefined, 2)
+                      : String(value),
                 });
               };
 
-              switch (v?.type) {
+              switch (value?.type) {
                 case 'range': {
-                  const dimensions: string[] = v.dimensions || [];
+                  const dimensions: string[] = value.dimensions || [];
                   const formatEdge = (values: string[]) =>
                     dimensions.map((d, i) => formatRangeDimensionValue(d, values[i])).join('; ');
 
                   return (
                     <TableClickableCell
                       className="range-detail"
+                      tooltip="Show full shardSpec"
                       onClick={onShowFullShardSpec}
                       hoverIcon={IconNames.EYE_OPEN}
                     >
                       <span className="range-label">Start:</span>
-                      {Array.isArray(v.start) ? formatEdge(v.start) : '-∞'}
+                      {Array.isArray(value.start) ? formatEdge(value.start) : '-∞'}
                       <br />
                       <span className="range-label">End:</span>
-                      {Array.isArray(v.end) ? formatEdge(v.end) : '∞'}
+                      {Array.isArray(value.end) ? formatEdge(value.end) : '∞'}
                     </TableClickableCell>
                   );
                 }
@@ -701,23 +805,29 @@ END AS "time_span"`,
                   return (
                     <TableClickableCell
                       className="range-detail"
+                      tooltip="Show full shardSpec"
                       onClick={onShowFullShardSpec}
                       hoverIcon={IconNames.EYE_OPEN}
                     >
                       <span className="range-label">Start:</span>
-                      {v.start != null ? formatRangeDimensionValue(v.dimension, v.start) : '-∞'}
+                      {value.start != null
+                        ? formatRangeDimensionValue(value.dimension, value.start)
+                        : '-∞'}
                       <br />
                       <span className="range-label">End:</span>
-                      {v.end != null ? formatRangeDimensionValue(v.dimension, v.end) : '∞'}
+                      {value.end != null
+                        ? formatRangeDimensionValue(value.dimension, value.end)
+                        : '∞'}
                     </TableClickableCell>
                   );
                 }
 
                 case 'hashed': {
-                  const { partitionDimensions } = v;
-                  if (!Array.isArray(partitionDimensions)) return value;
+                  const { partitionDimensions } = value;
+                  if (!Array.isArray(partitionDimensions)) return JSONBig.stringify(value);
                   return (
                     <TableClickableCell
+                      tooltip="Show full shardSpec"
                       onClick={onShowFullShardSpec}
                       hoverIcon={IconNames.EYE_OPEN}
                     >
@@ -735,6 +845,7 @@ END AS "time_span"`,
                 case 'tombstone':
                   return (
                     <TableClickableCell
+                      tooltip="Show full shardSpec"
                       onClick={onShowFullShardSpec}
                       hoverIcon={IconNames.EYE_OPEN}
                     >
@@ -745,10 +856,11 @@ END AS "time_span"`,
                 default:
                   return (
                     <TableClickableCell
+                      tooltip="Show full shardSpec"
                       onClick={onShowFullShardSpec}
                       hoverIcon={IconNames.EYE_OPEN}
                     >
-                      {String(value)}
+                      {JSONBig.stringify(value)}
                     </TableClickableCell>
                   );
               }
@@ -773,7 +885,6 @@ END AS "time_span"`,
             accessor: 'partition_num',
             width: 60,
             filterable: false,
-            sortable: hasSql,
             className: 'padded',
           },
           {
@@ -781,7 +892,6 @@ END AS "time_span"`,
             show: visibleColumns.shown('Size'),
             accessor: 'size',
             filterable: false,
-            sortable: hasSql,
             defaultSortDesc: true,
             width: 120,
             className: 'padded',
@@ -841,7 +951,7 @@ END AS "time_span"`,
           },
           {
             Header: twoLines('Replication factor', <i>(desired)</i>),
-            show: hasSql && visibleColumns.shown('Replication factor'),
+            show: visibleColumns.shown('Replication factor'),
             accessor: 'replication_factor',
             width: 80,
             filterable: false,
@@ -868,7 +978,7 @@ END AS "time_span"`,
           },
           {
             Header: 'Is realtime',
-            show: hasSql && visibleColumns.shown('Is realtime'),
+            show: visibleColumns.shown('Is realtime'),
             id: 'is_realtime',
             accessor: row => String(Boolean(row.is_realtime)),
             Filter: BooleanFilterInput,
@@ -886,7 +996,7 @@ END AS "time_span"`,
           },
           {
             Header: 'Is overshadowed',
-            show: hasSql && visibleColumns.shown('Is overshadowed'),
+            show: visibleColumns.shown('Is overshadowed'),
             id: 'is_overshadowed',
             accessor: row => String(Boolean(row.is_overshadowed)),
             Filter: BooleanFilterInput,
@@ -895,11 +1005,12 @@ END AS "time_span"`,
           },
           {
             Header: ACTION_COLUMN_LABEL,
-            show: capabilities.hasCoordinatorAccess() && visibleColumns.shown(ACTION_COLUMN_LABEL),
+            show: capabilities.hasCoordinatorAccess(),
             id: ACTION_COLUMN_ID,
             accessor: 'segment_id',
             width: ACTION_COLUMN_WIDTH,
             filterable: false,
+            sortable: false,
             Cell: row => {
               if (row.aggregated) return '';
               const id = row.value;
@@ -910,6 +1021,7 @@ END AS "time_span"`,
                     this.onDetail(id, datasource);
                   }}
                   actions={this.getSegmentActions(id, datasource)}
+                  menuTitle={id}
                 />
               );
             },
@@ -928,15 +1040,15 @@ END AS "time_span"`,
       <AsyncActionDialog
         action={async () => {
           const resp = await Api.instance.delete(
-            `/druid/coordinator/v1/datasources/${Api.encodePath(
+            `/druid/indexer/v1/datasources/${Api.encodePath(
               terminateDatasourceId,
             )}/segments/${Api.encodePath(terminateSegmentId)}`,
             {},
           );
           return resp.data;
         }}
-        confirmButtonText="Drop Segment"
-        successText="Segment drop request acknowledged, next time the coordinator runs segment will be dropped"
+        confirmButtonText="Drop segment"
+        successText="Segment drop request acknowledged, next time the overlord runs segment will be dropped"
         failText="Could not drop segment"
         intent={Intent.DANGER}
         onClose={() => {
@@ -947,7 +1059,7 @@ END AS "time_span"`,
         }}
       >
         <p>
-          Are you sure you want to drop segment <Code>{terminateSegmentId}</Code>?
+          Are you sure you want to drop segment <Tag minimal>{terminateSegmentId}</Tag>?
         </p>
         <p>This action is not reversible.</p>
       </AsyncActionDialog>
@@ -962,11 +1074,11 @@ END AS "time_span"`,
       <MoreButton>
         {capabilities.hasSql() && (
           <MenuItem
-            icon={IconNames.APPLICATION}
+            icon={getConsoleViewIcon('workbench')}
             text="View SQL query for table"
-            disabled={!lastSegmentsQuery}
+            disabled={typeof lastSegmentsQuery !== 'string'}
             onClick={() => {
-              if (!lastSegmentsQuery) return;
+              if (typeof lastSegmentsQuery !== 'string') return;
               goToQuery({ queryString: lastSegmentsQuery });
             }}
           />
@@ -976,6 +1088,7 @@ END AS "time_span"`,
   }
 
   render() {
+    const { capabilities, filters } = this.props;
     const {
       segmentTableActionDialogId,
       datasourceTableActionDialogId,
@@ -983,70 +1096,107 @@ END AS "time_span"`,
       visibleColumns,
       showSegmentTimeline,
       showFullShardSpec,
+      groupByInterval,
     } = this.state;
-    const { capabilities } = this.props;
-    const { groupByInterval } = this.state;
 
     return (
-      <>
-        <div
-          className={classNames('segments-view app-view', {
-            'show-segment-timeline': showSegmentTimeline,
-          })}
+      <div className="segments-view app-view">
+        <ViewControlBar label="Segments">
+          <RefreshButton
+            onRefresh={this.refresh}
+            localStorageKey={LocalStorageKeys.SEGMENTS_REFRESH_RATE}
+          />
+          <Label>Group by</Label>
+          <ButtonGroup>
+            <Button
+              active={!groupByInterval}
+              onClick={() => {
+                this.setState({ groupByInterval: false });
+              }}
+            >
+              None
+            </Button>
+            <Button
+              active={groupByInterval}
+              onClick={() => {
+                this.setState({ groupByInterval: true });
+              }}
+            >
+              Interval
+            </Button>
+          </ButtonGroup>
+          {this.renderBulkSegmentsActions()}
+          <Switch
+            checked={Boolean(showSegmentTimeline)}
+            label="Show segment timeline"
+            onChange={() =>
+              this.setState({
+                showSegmentTimeline: showSegmentTimeline
+                  ? undefined
+                  : {
+                      capabilities,
+                      datasource: findMap(filters, filter =>
+                        filter.id === 'datasource' && /^=[^=|]+$/.exec(String(filter.value))
+                          ? filter.value.slice(1)
+                          : undefined,
+                      ),
+                    },
+              })
+            }
+            disabled={!capabilities.hasSqlOrCoordinatorAccess()}
+          />
+          <TableColumnSelector
+            columns={TABLE_COLUMNS_BY_MODE[capabilities.getMode()]}
+            onChange={column =>
+              this.setState(prevState => ({
+                visibleColumns: prevState.visibleColumns.toggle(column),
+              }))
+            }
+            onClose={added => {
+              if (!added) return;
+              this.fetchData();
+            }}
+            tableColumnsHidden={visibleColumns.getHiddenColumns()}
+          />
+        </ViewControlBar>
+        <SplitterLayout
+          className="timeline-segments-splitter"
+          vertical
+          percentage
+          secondaryInitialSize={35}
+          primaryIndex={1}
+          primaryMinSize={20}
+          secondaryMinSize={10}
         >
-          <ViewControlBar label="Segments">
-            <RefreshButton
-              onRefresh={auto => {
-                if (auto && hasPopoverOpen()) return;
-                this.segmentsQueryManager.rerunLastQuery(auto);
+          {showSegmentTimeline && (
+            <SegmentTimeline
+              capabilities={showSegmentTimeline.capabilities}
+              datasource={showSegmentTimeline.datasource}
+              getIntervalActionButton={(start, end, datasource, realtime) => {
+                return (
+                  <Button
+                    text="Apply fitler to table"
+                    small
+                    rightIcon={IconNames.ARROW_DOWN}
+                    onClick={() =>
+                      this.handleFilterChange(
+                        compact([
+                          start && { id: 'start', value: `>=${start.toISOString()}` },
+                          end && { id: 'end', value: `<${end.toISOString()}` },
+                          datasource && { id: 'datasource', value: `=${datasource}` },
+                          typeof realtime === 'boolean'
+                            ? { id: 'is_realtime', value: `=${realtime}` }
+                            : undefined,
+                        ]),
+                      )
+                    }
+                  />
+                );
               }}
-              localStorageKey={LocalStorageKeys.SEGMENTS_REFRESH_RATE}
             />
-            <Label>Group by</Label>
-            <ButtonGroup>
-              <Button
-                active={!groupByInterval}
-                onClick={() => {
-                  this.setState({ groupByInterval: false });
-                  this.fetchData(false);
-                }}
-              >
-                None
-              </Button>
-              <Button
-                active={groupByInterval}
-                onClick={() => {
-                  this.setState({ groupByInterval: true });
-                  this.fetchData(true);
-                }}
-              >
-                Interval
-              </Button>
-            </ButtonGroup>
-            {this.renderBulkSegmentsActions()}
-            <Switch
-              checked={showSegmentTimeline}
-              label="Show segment timeline"
-              onChange={() => this.setState({ showSegmentTimeline: !showSegmentTimeline })}
-              disabled={!capabilities.hasSqlOrCoordinatorAccess()}
-            />
-            <TableColumnSelector
-              columns={tableColumns[capabilities.getMode()]}
-              onChange={column =>
-                this.setState(prevState => ({
-                  visibleColumns: prevState.visibleColumns.toggle(column),
-                }))
-              }
-              onClose={added => {
-                if (!added) return;
-                this.fetchData(groupByInterval);
-              }}
-              tableColumnsHidden={visibleColumns.getHiddenColumns()}
-            />
-          </ViewControlBar>
-          {showSegmentTimeline && <SegmentTimeline capabilities={capabilities} />}
+          )}
           {this.renderSegmentsTable()}
-        </div>
+        </SplitterLayout>
         {this.renderTerminateSegmentAction()}
         {segmentTableActionDialogId && datasourceTableActionDialogId && (
           <SegmentTableActionDialog
@@ -1063,7 +1213,7 @@ END AS "time_span"`,
             onClose={() => this.setState({ showFullShardSpec: undefined })}
           />
         )}
-      </>
+      </div>
     );
   }
 }

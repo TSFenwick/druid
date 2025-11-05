@@ -19,35 +19,57 @@
 
 package org.apache.druid.server;
 
+import com.fasterxml.jackson.databind.InjectableValues;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Ordering;
+import org.apache.druid.java.util.common.FileUtils;
 import org.apache.druid.java.util.common.Intervals;
-import org.apache.druid.java.util.common.MapUtils;
 import org.apache.druid.java.util.common.concurrent.Execs;
+import org.apache.druid.java.util.emitter.EmittingLogger;
+import org.apache.druid.math.expr.ExprMacroTable;
+import org.apache.druid.query.DataSegmentAndDescriptor;
+import org.apache.druid.query.LeafSegmentsBundle;
 import org.apache.druid.query.TableDataSource;
-import org.apache.druid.segment.QueryableIndex;
-import org.apache.druid.segment.ReferenceCountingSegment;
+import org.apache.druid.query.expression.TestExprMacroTable;
+import org.apache.druid.segment.IndexIO;
+import org.apache.druid.segment.IndexSpec;
+import org.apache.druid.segment.ReferenceCountedObjectProvider;
 import org.apache.druid.segment.Segment;
 import org.apache.druid.segment.SegmentLazyLoadFailCallback;
-import org.apache.druid.segment.StorageAdapter;
-import org.apache.druid.segment.loading.SegmentLoader;
+import org.apache.druid.segment.SegmentMapFunction;
+import org.apache.druid.segment.TestHelper;
+import org.apache.druid.segment.TestIndex;
+import org.apache.druid.segment.TestSegmentUtils;
+import org.apache.druid.segment.loading.AcquireSegmentAction;
+import org.apache.druid.segment.loading.LeastBytesUsedStorageLocationSelectorStrategy;
+import org.apache.druid.segment.loading.LocalDataSegmentPuller;
+import org.apache.druid.segment.loading.LocalLoadSpec;
+import org.apache.druid.segment.loading.SegmentCacheManager;
+import org.apache.druid.segment.loading.SegmentLoaderConfig;
 import org.apache.druid.segment.loading.SegmentLoadingException;
+import org.apache.druid.segment.loading.SegmentLocalCacheManager;
+import org.apache.druid.segment.loading.StorageLocation;
+import org.apache.druid.segment.loading.StorageLocationConfig;
 import org.apache.druid.server.SegmentManager.DataSourceState;
+import org.apache.druid.server.metrics.NoopServiceEmitter;
+import org.apache.druid.testing.InitializedNullHandlingTest;
 import org.apache.druid.timeline.DataSegment;
-import org.apache.druid.timeline.SegmentId;
 import org.apache.druid.timeline.VersionedIntervalTimeline;
-import org.apache.druid.timeline.partition.NoneShardSpec;
 import org.apache.druid.timeline.partition.NumberedOverwriteShardSpec;
 import org.apache.druid.timeline.partition.PartitionIds;
-import org.joda.time.Interval;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
-import org.mockito.Mockito;
+import org.junit.rules.TemporaryFolder;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,153 +80,106 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
-public class SegmentManagerTest
+public class SegmentManagerTest extends InitializedNullHandlingTest
 {
-
-  private static final SegmentLoader SEGMENT_LOADER = new SegmentLoader()
-  {
-    @Override
-    public ReferenceCountingSegment getSegment(final DataSegment segment, boolean lazy, SegmentLazyLoadFailCallback loadFailed)
-    {
-      return ReferenceCountingSegment.wrapSegment(new SegmentForTesting(
-          MapUtils.getString(segment.getLoadSpec(), "version"),
-          (Interval) segment.getLoadSpec().get("interval")
-      ), segment.getShardSpec());
-    }
-
-    @Override
-    public void cleanup(DataSegment segment)
-    {
-
-    }
-
-    @Override
-    public void loadSegmentIntoPageCache(DataSegment segment, ExecutorService exec)
-    {
-
-    }
-  };
-
-  private static class SegmentForTesting implements Segment
-  {
-    private final String version;
-    private final Interval interval;
-    private final StorageAdapter storageAdapter;
-
-    SegmentForTesting(String version, Interval interval)
-    {
-      this.version = version;
-      this.interval = interval;
-      storageAdapter = Mockito.mock(StorageAdapter.class);
-      Mockito.when(storageAdapter.getNumRows()).thenReturn(1);
-    }
-
-    public String getVersion()
-    {
-      return version;
-    }
-
-    public Interval getInterval()
-    {
-      return interval;
-    }
-
-    @Override
-    public SegmentId getId()
-    {
-      return SegmentId.dummy(version);
-    }
-
-    @Override
-    public Interval getDataInterval()
-    {
-      return interval;
-    }
-
-    @Override
-    public QueryableIndex asQueryableIndex()
-    {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public StorageAdapter asStorageAdapter()
-    {
-      return storageAdapter;
-    }
-
-    @Override
-    public void close()
-    {
-    }
-  }
-
   private static final List<DataSegment> SEGMENTS = ImmutableList.of(
-      new DataSegment(
-          "small_source",
-          Intervals.of("0/1000"),
-          "0",
-          ImmutableMap.of("interval", Intervals.of("0/1000"), "version", 0),
-          new ArrayList<>(),
-          new ArrayList<>(),
-          NoneShardSpec.instance(),
-          0,
-          10
-      ),
-      new DataSegment(
-          "small_source",
-          Intervals.of("1000/2000"),
-          "0",
-          ImmutableMap.of("interval", Intervals.of("1000/2000"), "version", 0),
-          new ArrayList<>(),
-          new ArrayList<>(),
-          NoneShardSpec.instance(),
-          0,
-          10
-      ),
-      new DataSegment(
-          "large_source",
-          Intervals.of("0/1000"),
-          "0",
-          ImmutableMap.of("interval", Intervals.of("0/1000"), "version", 0),
-          new ArrayList<>(),
-          new ArrayList<>(),
-          NoneShardSpec.instance(),
-          0,
-          100
-      ),
-      new DataSegment(
-          "large_source",
-          Intervals.of("1000/2000"),
-          "0",
-          ImmutableMap.of("interval", Intervals.of("1000/2000"), "version", 0),
-          new ArrayList<>(),
-          new ArrayList<>(),
-          NoneShardSpec.instance(),
-          0,
-          100
-      ),
-      // overshadowing the ahead segment
-      new DataSegment(
-          "large_source",
-          Intervals.of("1000/2000"),
-          "1",
-          ImmutableMap.of("interval", Intervals.of("1000/2000"), "version", 1),
-          new ArrayList<>(),
-          new ArrayList<>(),
-          NoneShardSpec.instance(),
-          1,
-          100
-      )
+      TestSegmentUtils.makeSegment("small_source", "0", Intervals.of("0/1000")),
+      TestSegmentUtils.makeSegment("small_source", "0", Intervals.of("1000/2000")),
+      TestSegmentUtils.makeSegment("large_source", "0", Intervals.of("0/1000")),
+      TestSegmentUtils.makeSegment("large_source", "0", Intervals.of("1000/2000")),
+      TestSegmentUtils.makeSegment("large_source", "1", Intervals.of("1000/2000"))
   );
 
   private ExecutorService executor;
   private SegmentManager segmentManager;
+  private SegmentManager virtualSegmentManager;
+
+  @Rule
+  public TemporaryFolder temporaryFolder = new TemporaryFolder();
 
   @Before
-  public void setup()
+  public void setup() throws IOException
   {
-    segmentManager = new SegmentManager(SEGMENT_LOADER);
+    EmittingLogger.registerEmitter(new NoopServiceEmitter());
+    final File segmentCacheDir = temporaryFolder.newFolder();
+    final SegmentLoaderConfig loaderConfig = new SegmentLoaderConfig()
+    {
+      @Override
+      public File getInfoDir()
+      {
+        return segmentCacheDir;
+      }
+
+      @Override
+      public List<StorageLocationConfig> getLocations()
+      {
+        return Collections.singletonList(
+            new StorageLocationConfig(segmentCacheDir, null, null)
+        );
+      }
+    };
+
+    final File vsfRoot = temporaryFolder.newFolder();
+    final File virtualSegmentCacheDir = new File(vsfRoot, "segmentCache");
+    FileUtils.mkdirp(virtualSegmentCacheDir);
+    final File vsfInfoDir = new File(vsfRoot, "info");
+    FileUtils.mkdirp(vsfInfoDir);
+    final SegmentLoaderConfig virtualLoaderConfig = new SegmentLoaderConfig()
+    {
+      @Override
+      public File getInfoDir()
+      {
+        return vsfInfoDir;
+      }
+
+      @Override
+      public List<StorageLocationConfig> getLocations()
+      {
+        return Collections.singletonList(
+            new StorageLocationConfig(virtualSegmentCacheDir, null, null)
+        );
+      }
+
+      @Override
+      public boolean isVirtualStorage()
+      {
+        return true;
+      }
+    };
+
+    final ObjectMapper objectMapper = TestHelper.makeJsonMapper();
+    objectMapper.registerSubtypes(TestSegmentUtils.TestLoadSpec.class);
+    objectMapper.registerSubtypes(TestSegmentUtils.TestSegmentizerFactory.class);
+    objectMapper.registerSubtypes(LocalLoadSpec.class);
+    objectMapper.setInjectableValues(
+        new InjectableValues.Std()
+            .addValue(ExprMacroTable.class.getName(), TestExprMacroTable.INSTANCE)
+            .addValue(ObjectMapper.class.getName(), objectMapper)
+            .addValue(DataSegment.PruneSpecsHolder.class, DataSegment.PruneSpecsHolder.DEFAULT)
+            .addValue(LocalDataSegmentPuller.class, new LocalDataSegmentPuller())
+            .addValue(IndexIO.class, TestHelper.getTestIndexIO())
+    );
+
+    final List<StorageLocation> storageLocations = loaderConfig.toStorageLocations();
+    final SegmentLocalCacheManager cacheManager = new SegmentLocalCacheManager(
+        storageLocations,
+        loaderConfig,
+        new LeastBytesUsedStorageLocationSelectorStrategy(storageLocations),
+        TestIndex.INDEX_IO,
+        objectMapper
+    );
+    segmentManager = new SegmentManager(cacheManager);
+
+    final List<StorageLocation> virtualStorageLocations = virtualLoaderConfig.toStorageLocations();
+    final SegmentCacheManager virtualCacheManager = new SegmentLocalCacheManager(
+        virtualStorageLocations,
+        virtualLoaderConfig,
+        new LeastBytesUsedStorageLocationSelectorStrategy(virtualStorageLocations),
+        TestIndex.INDEX_IO,
+        objectMapper
+    );
+
+    virtualSegmentManager = new SegmentManager(virtualCacheManager);
     executor = Execs.multiThreaded(SEGMENTS.size(), "SegmentManagerTest-%d");
   }
 
@@ -215,28 +190,57 @@ public class SegmentManagerTest
   }
 
   @Test
-  public void testLoadSegment() throws ExecutionException, InterruptedException, SegmentLoadingException
+  public void testLoadSegment() throws ExecutionException, InterruptedException
   {
-    final List<Future<Boolean>> futures = SEGMENTS.stream()
-                                                  .map(
-                                                      segment -> executor.submit(
-                                                          () -> segmentManager.loadSegment(segment, false, SegmentLazyLoadFailCallback.NOOP)
-                                                      )
-                                                  )
-                                                  .collect(Collectors.toList());
+    final List<Future<Void>> loadFutures = SEGMENTS.stream()
+                                                   .map(
+                                                       segment -> executor.submit(
+                                                           () -> loadSegmentOrFail(segment)
+                                                       )
+                                                   )
+                                                   .collect(Collectors.toList());
 
-    for (Future<Boolean> eachFuture : futures) {
-      Assert.assertTrue(eachFuture.get());
+    for (Future<Void> loadFuture : loadFutures) {
+      loadFuture.get();
     }
 
     assertResult(SEGMENTS);
   }
 
   @Test
-  public void testDropSegment() throws SegmentLoadingException, ExecutionException, InterruptedException
+  public void testLoadBootstrapSegment() throws ExecutionException, InterruptedException
+  {
+    final List<Future<Void>> loadFutures = SEGMENTS.stream()
+                                                   .map(
+                                                       segment -> executor.submit(
+                                                           () -> {
+                                                             try {
+                                                               segmentManager.loadSegmentOnBootstrap(
+                                                                   segment,
+                                                                   SegmentLazyLoadFailCallback.NOOP
+                                                               );
+                                                             }
+                                                             catch (IOException | SegmentLoadingException e) {
+                                                               throw new RuntimeException(e);
+                                                             }
+                                                             return (Void) null;
+                                                           }
+                                                       )
+                                                   )
+                                                   .collect(Collectors.toList());
+
+    for (Future<Void> loadFuture : loadFutures) {
+      loadFuture.get();
+    }
+
+    assertResult(SEGMENTS);
+  }
+
+  @Test
+  public void testDropSegment() throws SegmentLoadingException, ExecutionException, InterruptedException, IOException
   {
     for (DataSegment eachSegment : SEGMENTS) {
-      Assert.assertTrue(segmentManager.loadSegment(eachSegment, false, SegmentLazyLoadFailCallback.NOOP));
+      segmentManager.loadSegment(eachSegment);
     }
 
     final List<Future<Void>> futures = ImmutableList.of(SEGMENTS.get(0), SEGMENTS.get(2)).stream()
@@ -259,20 +263,30 @@ public class SegmentManagerTest
     );
   }
 
-  @Test
-  public void testLoadDropSegment() throws SegmentLoadingException, ExecutionException, InterruptedException
+  private Void loadSegmentOrFail(DataSegment segment)
   {
-    Assert.assertTrue(segmentManager.loadSegment(SEGMENTS.get(0), false, SegmentLazyLoadFailCallback.NOOP));
-    Assert.assertTrue(segmentManager.loadSegment(SEGMENTS.get(2), false, SegmentLazyLoadFailCallback.NOOP));
+    try {
+      segmentManager.loadSegment(segment);
+    }
+    catch (IOException | SegmentLoadingException e) {
+      throw new RuntimeException(e);
+    }
+    return null;
+  }
 
-    final List<Future<Boolean>> loadFutures = ImmutableList.of(SEGMENTS.get(1), SEGMENTS.get(3), SEGMENTS.get(4))
-                                                           .stream()
-                                                           .map(
-                                                               segment -> executor.submit(
-                                                                   () -> segmentManager.loadSegment(segment, false, SegmentLazyLoadFailCallback.NOOP)
-                                                               )
-                                                           )
-                                                           .collect(Collectors.toList());
+  @Test
+  public void testLoadDropSegment()
+      throws SegmentLoadingException, ExecutionException, InterruptedException, IOException
+  {
+    segmentManager.loadSegment(SEGMENTS.get(0));
+    segmentManager.loadSegment(SEGMENTS.get(2));
+
+    final List<Future<Void>> loadFutures = ImmutableList.of(SEGMENTS.get(1), SEGMENTS.get(3), SEGMENTS.get(4))
+                                                        .stream()
+                                                        .map(
+                                                            segment -> executor.submit(() -> loadSegmentOrFail(segment))
+                                                        )
+                                                        .collect(Collectors.toList());
     final List<Future<Void>> dropFutures = ImmutableList.of(SEGMENTS.get(0), SEGMENTS.get(2)).stream()
                                                         .map(
                                                             segment -> executor.submit(
@@ -284,11 +298,11 @@ public class SegmentManagerTest
                                                         )
                                                         .collect(Collectors.toList());
 
-    for (Future<Boolean> eachFuture : loadFutures) {
-      Assert.assertTrue(eachFuture.get());
+    for (Future<Void> loadFuture : loadFutures) {
+      loadFuture.get();
     }
-    for (Future<Void> eachFuture : dropFutures) {
-      eachFuture.get();
+    for (Future<Void> dropFuture : dropFutures) {
+      dropFuture.get();
     }
 
     assertResult(
@@ -297,60 +311,52 @@ public class SegmentManagerTest
   }
 
   @Test
-  public void testLoadDuplicatedSegmentsSequentially() throws SegmentLoadingException
+  public void testLoadDuplicatedSegmentsSequentially() throws SegmentLoadingException, IOException
   {
     for (DataSegment segment : SEGMENTS) {
-      Assert.assertTrue(segmentManager.loadSegment(segment, false, SegmentLazyLoadFailCallback.NOOP));
+      segmentManager.loadSegment(segment);
     }
     // try to load an existing segment
-    Assert.assertFalse(segmentManager.loadSegment(SEGMENTS.get(0), false, SegmentLazyLoadFailCallback.NOOP));
+    segmentManager.loadSegment(SEGMENTS.get(0));
 
     assertResult(SEGMENTS);
   }
 
   @Test
   public void testLoadDuplicatedSegmentsInParallel()
-      throws ExecutionException, InterruptedException, SegmentLoadingException
+      throws ExecutionException, InterruptedException
   {
-    final List<Future<Boolean>> futures = ImmutableList.of(SEGMENTS.get(0), SEGMENTS.get(0), SEGMENTS.get(0))
-                                                       .stream()
-                                                       .map(
-                                                           segment -> executor.submit(
-                                                               () -> segmentManager.loadSegment(segment, false, SegmentLazyLoadFailCallback.NOOP)
-                                                           )
-                                                       )
-                                                       .collect(Collectors.toList());
+    final List<Future<Void>> loadFutures = ImmutableList.of(SEGMENTS.get(0), SEGMENTS.get(0), SEGMENTS.get(0))
+                                                        .stream()
+                                                        .map(
+                                                            segment -> executor.submit(
+                                                                () -> loadSegmentOrFail(segment)
+                                                            )
+                                                        )
+                                                        .collect(Collectors.toList());
 
-    int numSucceededFutures = 0;
-    int numFailedFutures = 0;
-    for (Future<Boolean> future : futures) {
-      numSucceededFutures += future.get() ? 1 : 0;
-      numFailedFutures += future.get() ? 0 : 1;
+    for (Future<Void> loadFuture : loadFutures) {
+      loadFuture.get();
     }
-
-    Assert.assertEquals(1, numSucceededFutures);
-    Assert.assertEquals(2, numFailedFutures);
 
     assertResult(ImmutableList.of(SEGMENTS.get(0)));
   }
 
   @Test
-  public void testNonExistingSegmentsSequentially() throws SegmentLoadingException
+  public void testNonExistingSegmentsSequentially() throws SegmentLoadingException, IOException
   {
-    Assert.assertTrue(segmentManager.loadSegment(SEGMENTS.get(0), false, SegmentLazyLoadFailCallback.NOOP));
+    segmentManager.loadSegment(SEGMENTS.get(0));
 
     // try to drop a non-existing segment of different data source
     segmentManager.dropSegment(SEGMENTS.get(2));
-    assertResult(
-        ImmutableList.of(SEGMENTS.get(0))
-    );
+    assertResult(ImmutableList.of(SEGMENTS.get(0)));
   }
 
   @Test
   public void testNonExistingSegmentsInParallel()
-      throws SegmentLoadingException, ExecutionException, InterruptedException
+      throws SegmentLoadingException, ExecutionException, InterruptedException, IOException
   {
-    segmentManager.loadSegment(SEGMENTS.get(0), false, SegmentLazyLoadFailCallback.NOOP);
+    segmentManager.loadSegment(SEGMENTS.get(0));
     final List<Future<Void>> futures = ImmutableList.of(SEGMENTS.get(1), SEGMENTS.get(2))
                                                     .stream()
                                                     .map(
@@ -371,9 +377,9 @@ public class SegmentManagerTest
   }
 
   @Test
-  public void testRemoveEmptyTimeline() throws SegmentLoadingException
+  public void testRemoveEmptyTimeline() throws SegmentLoadingException, IOException
   {
-    segmentManager.loadSegment(SEGMENTS.get(0), false, SegmentLazyLoadFailCallback.NOOP);
+    segmentManager.loadSegment(SEGMENTS.get(0));
     assertResult(ImmutableList.of(SEGMENTS.get(0)));
     Assert.assertEquals(1, segmentManager.getDataSources().size());
     segmentManager.dropSegment(SEGMENTS.get(0));
@@ -385,18 +391,18 @@ public class SegmentManagerTest
   {
     Assert.assertEquals(
         Optional.empty(),
-        segmentManager.getTimeline((new TableDataSource("nonExisting")).getAnalysis())
+        segmentManager.getTimeline((new TableDataSource("nonExisting")))
     );
   }
 
   @Test
-  public void testLoadAndDropNonRootGenerationSegment() throws SegmentLoadingException
+  public void testLoadAndDropNonRootGenerationSegment() throws SegmentLoadingException, IOException
   {
     final DataSegment segment = new DataSegment(
         "small_source",
         Intervals.of("0/1000"),
         "0",
-        ImmutableMap.of("interval", Intervals.of("0/1000"), "version", 0),
+        ImmutableMap.of("type", "test", "interval", Intervals.of("0/1000"), "version", 0),
         new ArrayList<>(),
         new ArrayList<>(),
         new NumberedOverwriteShardSpec(
@@ -410,15 +416,97 @@ public class SegmentManagerTest
         10
     );
 
-    segmentManager.loadSegment(segment, false, SegmentLazyLoadFailCallback.NOOP);
+    segmentManager.loadSegment(segment);
     assertResult(ImmutableList.of(segment));
 
     segmentManager.dropSegment(segment);
     assertResult(ImmutableList.of());
   }
 
-  @SuppressWarnings("RedundantThrows") // TODO remove when the bug in intelliJ is fixed.
-  private void assertResult(List<DataSegment> expectedExistingSegments) throws SegmentLoadingException
+  @Test
+  public void testGetSegmentsBundle() throws SegmentLoadingException, IOException
+  {
+    segmentManager.loadSegment(SEGMENTS.get(0));
+    segmentManager.loadSegment(SEGMENTS.get(1));
+
+    DataSegmentAndDescriptor d1 = new DataSegmentAndDescriptor(SEGMENTS.get(0), SEGMENTS.get(0).toDescriptor());
+    DataSegmentAndDescriptor d2 = new DataSegmentAndDescriptor(SEGMENTS.get(1), SEGMENTS.get(1).toDescriptor());
+    DataSegmentAndDescriptor d3 = new DataSegmentAndDescriptor(SEGMENTS.get(2), SEGMENTS.get(2).toDescriptor());
+    DataSegmentAndDescriptor d4 = new DataSegmentAndDescriptor(null, SEGMENTS.get(3).toDescriptor());
+
+    LeafSegmentsBundle bundle = segmentManager.getSegmentsBundle(
+        List.of(d1, d2, d3, d4),
+        SegmentMapFunction.IDENTITY
+    );
+
+    // expect 2 cached segments
+    Assert.assertEquals(2, bundle.getCachedSegments().size());
+    Assert.assertEquals(
+        d1.getDescriptor(),
+        bundle.getCachedSegments().get(0).getSegmentDescriptor()
+    );
+    Assert.assertEquals(
+        d2.getDescriptor(),
+        bundle.getCachedSegments().get(1).getSegmentDescriptor()
+    );
+    // no loadable segments since vsf is not enabled
+    Assert.assertEquals(
+        List.of(),
+        bundle.getLoadableSegments()
+    );
+    // 2 missing segments since cannot load d3 on demand and it was not loaded into the cache
+    Assert.assertEquals(
+        List.of(d3.getDescriptor(), d4.getDescriptor()),
+        bundle.getMissingSegments()
+    );
+  }
+
+  @Test
+  public void testGetSegmentsBundleVirtual()
+      throws SegmentLoadingException, IOException, ExecutionException, InterruptedException
+  {
+    File loc = temporaryFolder.newFolder();
+    File seg = TestIndex.persist(TestIndex.getIncrementalTestIndex(), IndexSpec.getDefault(), loc);
+    DataSegment toLoad = SEGMENTS.get(1).withLoadSpec(
+        Map.of(
+            "type", "local",
+            "path", seg.getAbsolutePath() + "/"
+        )
+    );
+
+    final AcquireSegmentAction action = virtualSegmentManager.acquireSegment(toLoad);
+    ReferenceCountedObjectProvider<Segment> segmentProvider = action.getSegmentFuture().get();
+    Assert.assertNotNull(segmentProvider);
+
+    DataSegmentAndDescriptor d1 = new DataSegmentAndDescriptor(SEGMENTS.get(0), SEGMENTS.get(0).toDescriptor());
+    DataSegmentAndDescriptor d2 = new DataSegmentAndDescriptor(toLoad, toLoad.toDescriptor());
+    DataSegmentAndDescriptor d3 = new DataSegmentAndDescriptor(SEGMENTS.get(2), SEGMENTS.get(2).toDescriptor());
+    DataSegmentAndDescriptor d4 = new DataSegmentAndDescriptor(null, SEGMENTS.get(3).toDescriptor());
+
+    LeafSegmentsBundle bundle = virtualSegmentManager.getSegmentsBundle(
+        List.of(d1, d2, d3, d4),
+        SegmentMapFunction.IDENTITY
+    );
+
+    // expect 1 cached segment since we called acquireSegment
+    Assert.assertEquals(1, bundle.getCachedSegments().size());
+    Assert.assertEquals(
+        d2.getDescriptor(),
+        bundle.getCachedSegments().get(0).getSegmentDescriptor()
+    );
+    // 2 loadable segments (in theory, would explode if we tried since they dont have real files)
+    Assert.assertEquals(
+        List.of(d1, d3),
+        bundle.getLoadableSegments()
+    );
+    // 1 missing segment
+    Assert.assertEquals(
+        List.of(d4.getDescriptor()),
+        bundle.getMissingSegments()
+    );
+  }
+
+  private void assertResult(List<DataSegment> expectedExistingSegments)
   {
     final Map<String, Long> expectedDataSourceSizes =
         expectedExistingSegments.stream()
@@ -429,9 +517,9 @@ public class SegmentManagerTest
     final Set<String> expectedDataSourceNames = expectedExistingSegments.stream()
                                                                         .map(DataSegment::getDataSource)
                                                                         .collect(Collectors.toSet());
-    final Map<String, VersionedIntervalTimeline<String, ReferenceCountingSegment>> expectedTimelines = new HashMap<>();
+    final Map<String, VersionedIntervalTimeline<String, DataSegment>> expectedTimelines = new HashMap<>();
     for (DataSegment segment : expectedExistingSegments) {
-      final VersionedIntervalTimeline<String, ReferenceCountingSegment> expectedTimeline =
+      final VersionedIntervalTimeline<String, DataSegment> expectedTimeline =
           expectedTimelines.computeIfAbsent(
               segment.getDataSource(),
               k -> new VersionedIntervalTimeline<>(Ordering.natural())
@@ -439,9 +527,7 @@ public class SegmentManagerTest
       expectedTimeline.add(
           segment.getInterval(),
           segment.getVersion(),
-          segment.getShardSpec().createChunk(
-              ReferenceCountingSegment.wrapSegment(SEGMENT_LOADER.getSegment(segment, false, SegmentLazyLoadFailCallback.NOOP), segment.getShardSpec())
-          )
+          segment.getShardSpec().createChunk(segment)
       );
     }
 

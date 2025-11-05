@@ -19,10 +19,10 @@
 
 package org.apache.druid.segment.loading;
 
+import com.fasterxml.jackson.annotation.JacksonInject;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
-import org.apache.druid.utils.JvmUtils;
+import org.apache.druid.utils.RuntimeInfo;
 
 import java.io.File;
 import java.util.Collections;
@@ -35,6 +35,9 @@ import java.util.stream.Collectors;
  */
 public class SegmentLoaderConfig
 {
+  @JacksonInject
+  private final RuntimeInfo runtimeInfo = new RuntimeInfo();
+
   @JsonProperty
   private List<StorageLocationConfig> locations = Collections.emptyList();
 
@@ -51,7 +54,7 @@ public class SegmentLoaderConfig
   private int announceIntervalMillis = 0; // do not background announce
 
   @JsonProperty("numLoadingThreads")
-  private int numLoadingThreads = Math.max(1, JvmUtils.getRuntimeInfo().getAvailableProcessors() / 6);
+  private int numLoadingThreads = Math.max(1, runtimeInfo.getAvailableProcessors() / 6);
 
   @JsonProperty("numBootstrapThreads")
   private Integer numBootstrapThreads = null;
@@ -67,6 +70,12 @@ public class SegmentLoaderConfig
 
   @JsonProperty
   private int statusQueueMaxSize = 100;
+
+  @JsonProperty("virtualStorage")
+  private boolean virtualStorage = false;
+
+  @JsonProperty("virtualStorageLoadThreads")
+  private int virtualStorageLoadThreads = 2 * runtimeInfo.getAvailableProcessors();
 
   private long combinedMaxSize = 0;
 
@@ -119,9 +128,6 @@ public class SegmentLoaderConfig
 
   public File getInfoDir()
   {
-    if (infoDir == null) {
-      infoDir = new File(locations.get(0).getPath(), "info_dir");
-    }
     return infoDir;
   }
 
@@ -138,6 +144,16 @@ public class SegmentLoaderConfig
     return combinedMaxSize;
   }
 
+  public boolean isVirtualStorage()
+  {
+    return virtualStorage;
+  }
+
+  public int getVirtualStorageLoadThreads()
+  {
+    return virtualStorageLoadThreads;
+  }
+
   public SegmentLoaderConfig withLocations(List<StorageLocationConfig> locations)
   {
     SegmentLoaderConfig retVal = new SegmentLoaderConfig();
@@ -147,18 +163,8 @@ public class SegmentLoaderConfig
     return retVal;
   }
 
-  @VisibleForTesting
-  public SegmentLoaderConfig withInfoDir(File infoDir)
-  {
-    SegmentLoaderConfig retVal = new SegmentLoaderConfig();
-    retVal.locations = this.locations;
-    retVal.deleteOnRemove = this.deleteOnRemove;
-    retVal.infoDir = infoDir;
-    return retVal;
-  }
-
   /**
-   * Convert StorageLocationConfig objects to StorageLocation objects
+   * Convert a list of {@link StorageLocationConfig} objects to {@link StorageLocation} objects.
    * <p>
    * Note: {@link #getLocations} is called instead of variable access because some testcases overrides this method
    */
@@ -177,9 +183,19 @@ public class SegmentLoaderConfig
   {
     return "SegmentLoaderConfig{" +
            "locations=" + locations +
+           ", lazyLoadOnStart=" + lazyLoadOnStart +
            ", deleteOnRemove=" + deleteOnRemove +
            ", dropSegmentDelayMillis=" + dropSegmentDelayMillis +
+           ", announceIntervalMillis=" + announceIntervalMillis +
+           ", numLoadingThreads=" + numLoadingThreads +
+           ", numBootstrapThreads=" + numBootstrapThreads +
+           ", numThreadsToLoadSegmentsIntoPageCacheOnDownload=" + numThreadsToLoadSegmentsIntoPageCacheOnDownload +
+           ", numThreadsToLoadSegmentsIntoPageCacheOnBootstrap=" + numThreadsToLoadSegmentsIntoPageCacheOnBootstrap +
            ", infoDir=" + infoDir +
+           ", statusQueueMaxSize=" + statusQueueMaxSize +
+           ", useVirtualStorageFabric=" + virtualStorage +
+           ", virtualStorageFabricLoadThreads=" + virtualStorageLoadThreads +
+           ", combinedMaxSize=" + combinedMaxSize +
            '}';
   }
 }

@@ -26,6 +26,9 @@ import com.google.common.io.BaseEncoding;
 import com.google.common.primitives.Chars;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.druid.math.expr.Expr;
+import org.apache.druid.math.expr.ExprEval;
+import org.apache.druid.math.expr.ExprType;
+import org.apache.druid.math.expr.ExpressionType;
 import org.apache.druid.segment.VirtualColumn;
 import org.apache.druid.segment.column.ColumnType;
 import org.apache.druid.segment.virtual.ExpressionVirtualColumn;
@@ -178,6 +181,19 @@ public class DruidExpression
         Collections.emptyList(),
         null
     );
+  }
+
+  /**
+   * Create a literal expression from an {@link ExprEval}.
+   */
+  public static DruidExpression ofLiteral(final DruidLiteral literal)
+  {
+    if (literal.type() != null && literal.type().is(ExprType.STRING)) {
+      return ofStringLiteral((String) literal.value());
+    } else {
+      final ColumnType evalColumnType = literal.type() != null ? ExpressionType.toColumnType(literal.type()) : null;
+      return ofLiteral(evalColumnType, ExprEval.ofType(literal.type(), literal.value()).toExpr().stringify());
+    }
   }
 
   public static DruidExpression ofStringLiteral(final String s)
@@ -353,7 +369,7 @@ public class DruidExpression
 
   public String getDirectColumn()
   {
-    return Preconditions.checkNotNull(simpleExtraction.getColumn());
+    return Preconditions.checkNotNull(simpleExtraction, "simpleExtraction").getColumn();
   }
 
   public boolean isSimpleExtraction()
@@ -385,7 +401,7 @@ public class DruidExpression
       final ExpressionParser parser
   )
   {
-    return virtualColumnCreator.create(name, outputType, expression.get(), parser);
+    return virtualColumnCreator.create(name, outputType, parser, this);
   }
 
   public VirtualColumn toExpressionVirtualColumn(
@@ -394,12 +410,22 @@ public class DruidExpression
       final ExpressionParser parser
   )
   {
-    return DEFAULT_VIRTUAL_COLUMN_BUILDER.create(name, outputType, expression.get(), parser);
+    return DEFAULT_VIRTUAL_COLUMN_BUILDER.create(name, outputType, parser, this);
   }
 
   public NodeType getType()
   {
     return nodeType;
+  }
+
+  /**
+   * Returns whether this expression is {@link NodeType#IDENTIFIER} or {@link NodeType#SPECIALIZED}. Useful because
+   * these are the expressions that can be expected to become direct column references once virtual columns have gone
+   * through a specialization pass.
+   */
+  public boolean isIdentifierOrSpecialized()
+  {
+    return nodeType == NodeType.IDENTIFIER || nodeType == NodeType.SPECIALIZED;
   }
 
   /**
@@ -593,15 +619,28 @@ public class DruidExpression
   @FunctionalInterface
   public interface VirtualColumnCreator
   {
-    VirtualColumn create(String name, ColumnType outputType, String expression, ExpressionParser parser);
+    /**
+     * Create a virtual column for an expression.
+     *
+     * @param name       name of the virtual column
+     * @param outputType type of the virtual column
+     * @param parser     expression parser, if needed
+     * @param self       expression, possibly rewritten to refer to specialized virtual columns
+     */
+    VirtualColumn create(
+        String name,
+        ColumnType outputType,
+        ExpressionParser parser,
+        DruidExpression self
+    );
   }
 
   public static class ExpressionVirtualColumnCreator implements VirtualColumnCreator
   {
     @Override
-    public VirtualColumn create(String name, ColumnType outputType, String expression, ExpressionParser parser)
+    public VirtualColumn create(String name, ColumnType outputType, ExpressionParser parser, DruidExpression self)
     {
-      return new ExpressionVirtualColumn(name, expression, parser.parse(expression), outputType);
+      return new ExpressionVirtualColumn(name, self.getExpression(), parser.parse(self.getExpression()), outputType);
     }
   }
 }

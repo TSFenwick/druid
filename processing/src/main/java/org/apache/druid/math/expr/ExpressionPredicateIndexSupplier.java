@@ -28,7 +28,7 @@ import org.apache.druid.query.filter.DruidPredicateFactory;
 import org.apache.druid.segment.column.ColumnIndexSupplier;
 import org.apache.druid.segment.column.ColumnType;
 import org.apache.druid.segment.index.BitmapColumnIndex;
-import org.apache.druid.segment.index.SimpleImmutableBitmapIterableIndex;
+import org.apache.druid.segment.index.DictionaryScanningBitmapIndex;
 import org.apache.druid.segment.index.semantic.DictionaryEncodedValueIndex;
 import org.apache.druid.segment.index.semantic.DruidPredicateIndexes;
 
@@ -36,6 +36,13 @@ import javax.annotation.Nullable;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
+/**
+ * Uses the underlying dictionary values of a column to provide {@link DruidPredicateIndexes} that apply an {@link Expr}
+ * to the values of an input column before matching with a {@link DruidPredicateFactory}. This supplier is only suitable
+ * for use on a direct column, and that column must be dictionary encoded and provides
+ * {@link DictionaryEncodedValueIndex} so that the dictionary values can be iterated and transformed with the
+ * {@link Expr}
+ */
 public class ExpressionPredicateIndexSupplier implements ColumnIndexSupplier
 {
   private final Expr expr;
@@ -75,10 +82,12 @@ public class ExpressionPredicateIndexSupplier implements ColumnIndexSupplier
     @Override
     public BitmapColumnIndex forPredicate(DruidPredicateFactory matcherFactory)
     {
-      final java.util.function.Function<Object, ExprEval<?>> evalFunction =
+      final java.util.function.Function<Object, ExprEval<?>> evalFunction;
+
+      evalFunction =
           inputValue -> expr.eval(InputBindings.forInputSupplier(inputColumn, inputType, () -> inputValue));
 
-      return new SimpleImmutableBitmapIterableIndex()
+      return new DictionaryScanningBitmapIndex(inputColumnIndexes.getCardinality())
       {
         @Override
         public Iterable<ImmutableBitmap> getBitmapIterable(boolean includeUnknown)
@@ -207,7 +216,7 @@ public class ExpressionPredicateIndexSupplier implements ColumnIndexSupplier
       @Override
       boolean nextMatches(@Nullable Object nextValue)
       {
-        final Object result = evalFunction.apply(nextValue).valueOrDefault();
+        final Object result = evalFunction.apply(nextValue).value();
         return predicate.apply(result).matches(includeUnknown);
       }
     };

@@ -19,7 +19,6 @@
 
 package org.apache.druid.utils;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.primitives.Ints;
 import com.google.inject.Inject;
 
@@ -71,11 +70,10 @@ public class JvmUtils
     return MAJOR_VERSION;
   }
 
-  public static boolean isIsJava9Compatible()
-  {
-    return MAJOR_VERSION >= 9;
-  }
-
+  /**
+   * Deprecated, inject {@link RuntimeInfo} instead of using this function.
+   */
+  @Deprecated
   public static RuntimeInfo getRuntimeInfo()
   {
     return RUNTIME_INFO;
@@ -140,14 +138,5 @@ public class JvmUtils
         }
     ).collect(Collectors.toList());
     return jobURLs;
-  }
-
-  /**
-   * Only for testing.
-   */
-  @VisibleForTesting
-  public static void resetTestsToDefaultRuntimeInfo()
-  {
-    RUNTIME_INFO = new RuntimeInfo();
   }
 }

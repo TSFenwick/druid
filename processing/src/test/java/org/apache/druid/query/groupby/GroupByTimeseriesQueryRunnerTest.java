@@ -24,7 +24,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import org.apache.druid.common.config.NullHandling;
 import org.apache.druid.data.input.MapBasedRow;
 import org.apache.druid.java.util.common.DateTimes;
 import org.apache.druid.java.util.common.HumanReadableBytes;
@@ -100,12 +99,13 @@ public class GroupByTimeseriesQueryRunnerTest extends TimeseriesQueryRunnerTest
 
     final List<Object[]> constructors = new ArrayList<>();
 
-    for (QueryRunner<ResultRow> runner : QueryRunnerTestHelper.makeQueryRunnersToMerge(factory)) {
+    for (QueryRunner<ResultRow> runner : QueryRunnerTestHelper.makeQueryRunnersToMerge(factory, false)) {
       final QueryRunner modifiedRunner = new QueryRunner()
       {
         @Override
         public Sequence run(QueryPlus queryPlus, ResponseContext responseContext)
         {
+          queryPlus = GroupByQueryRunnerTestHelper.populateResourceId(queryPlus);
           final ObjectMapper jsonMapper = TestHelper.makeJsonMapper();
           TimeseriesQuery tsQuery = (TimeseriesQuery) queryPlus.getQuery();
 
@@ -281,6 +281,27 @@ public class GroupByTimeseriesQueryRunnerTest extends TimeseriesQueryRunnerTest
   }
 
   @Override
+  public void testTimeseriesNullableLongMax()
+  {
+    // Skip this test because the timeseries test expects a null value to be returned for the aggregator even if
+    // there's no data for a period in query, but group by doesn't return data for periods that have no data.
+  }
+
+  @Override
+  public void testTimeseriesProjections()
+  {
+    // Skip this test because the timeseries test expects a null value to be returned for the aggregator even if
+    // there's no data for a period in query, but group by doesn't return data for periods that have no data.
+  }
+
+  @Override
+  public void testTimeseriesProjectionsCounts()
+  {
+    // Skip this test because the timeseries test expects a 0 value to be returned for the count aggregator even if
+    // there's no data for a period in query, but group by doesn't return data for periods that have no data.
+  }
+
+  @Override
   public void testEmptyTimeseries()
   {
     // Skip this test because the timeseries test expects the empty range to have one entry, but group by
@@ -372,10 +393,6 @@ public class GroupByTimeseriesQueryRunnerTest extends TimeseriesQueryRunnerTest
   @Test
   public void testTimeseriesWithInvertedFilterOnNonExistentDimension()
   {
-    if (NullHandling.replaceWithDefault()) {
-      super.testTimeseriesWithInvertedFilterOnNonExistentDimension();
-      return;
-    }
     TimeseriesQuery query = Druids.newTimeseriesQueryBuilder()
                                   .dataSource(QueryRunnerTestHelper.DATA_SOURCE)
                                   .granularity(QueryRunnerTestHelper.DAY_GRAN)

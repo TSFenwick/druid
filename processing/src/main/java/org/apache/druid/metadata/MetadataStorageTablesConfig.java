@@ -21,10 +21,8 @@ package org.apache.druid.metadata;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import org.apache.druid.common.config.Configs;
 import org.apache.druid.java.util.common.StringUtils;
-
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  */
@@ -34,16 +32,10 @@ public class MetadataStorageTablesConfig
 
   public static MetadataStorageTablesConfig fromBase(String base)
   {
-    return new MetadataStorageTablesConfig(base, null, null, null, null, null, null, null, null, null, null, null);
+    return new MetadataStorageTablesConfig(base, null, null, null, null, null, null, null, null, null, null, null, null);
   }
 
-  public static final String TASK_ENTRY_TYPE = "task";
-
   private static final String DEFAULT_BASE = "druid";
-
-  private final Map<String, String> entryTables = new HashMap<>();
-  private final Map<String, String> logTables = new HashMap<>();
-  private final Map<String, String> lockTables = new HashMap<>();
 
   @JsonProperty("base")
   private final String base;
@@ -69,9 +61,6 @@ public class MetadataStorageTablesConfig
   @JsonProperty("tasks")
   private final String tasksTable;
 
-  @JsonProperty("taskLog")
-  private final String taskLogTable;
-
   @JsonProperty("taskLock")
   private final String taskLockTable;
 
@@ -80,6 +69,12 @@ public class MetadataStorageTablesConfig
 
   @JsonProperty("supervisors")
   private final String supervisorTable;
+
+  @JsonProperty("segmentSchemas")
+  private final String segmentSchemasTable;
+
+  @JsonProperty("useShortIndexNames")
+  private final boolean useShortIndexNames;
 
   @JsonCreator
   public MetadataStorageTablesConfig(
@@ -90,11 +85,12 @@ public class MetadataStorageTablesConfig
       @JsonProperty("rules") String rulesTable,
       @JsonProperty("config") String configTable,
       @JsonProperty("tasks") String tasksTable,
-      @JsonProperty("taskLog") String taskLogTable,
       @JsonProperty("taskLock") String taskLockTable,
       @JsonProperty("audit") String auditTable,
       @JsonProperty("supervisors") String supervisorTable,
-      @JsonProperty("upgradeSegments") String upgradeSegmentsTable
+      @JsonProperty("upgradeSegments") String upgradeSegmentsTable,
+      @JsonProperty("segmentSchemas") String segmentSchemasTable,
+      @JsonProperty("useShortIndexNames") Boolean useShortIndexNames
   )
   {
     this.base = (base == null) ? DEFAULT_BASE : base;
@@ -106,13 +102,11 @@ public class MetadataStorageTablesConfig
     this.configTable = makeTableName(configTable, "config");
 
     this.tasksTable = makeTableName(tasksTable, "tasks");
-    this.taskLogTable = makeTableName(taskLogTable, "tasklogs");
     this.taskLockTable = makeTableName(taskLockTable, "tasklocks");
-    entryTables.put(TASK_ENTRY_TYPE, this.tasksTable);
-    logTables.put(TASK_ENTRY_TYPE, this.taskLogTable);
-    lockTables.put(TASK_ENTRY_TYPE, this.taskLockTable);
     this.auditTable = makeTableName(auditTable, "audit");
     this.supervisorTable = makeTableName(supervisorTable, "supervisors");
+    this.segmentSchemasTable = makeTableName(segmentSchemasTable, "segmentSchemas");
+    this.useShortIndexNames = Configs.valueOrDefault(useShortIndexNames, false);
   }
 
   private String makeTableName(String explicitTableName, String defaultSuffix)
@@ -162,26 +156,6 @@ public class MetadataStorageTablesConfig
     return configTable;
   }
 
-  public String getEntryTable(final String entryType)
-  {
-    return entryTables.get(entryType);
-  }
-
-  public String getLogTable(final String entryType)
-  {
-    return logTables.get(entryType);
-  }
-
-  public String getLockTable(final String entryType)
-  {
-    return lockTables.get(entryType);
-  }
-
-  public String getTaskEntryType()
-  {
-    return TASK_ENTRY_TYPE;
-  }
-
   public String getAuditTable()
   {
     return auditTable;
@@ -197,13 +171,21 @@ public class MetadataStorageTablesConfig
     return tasksTable;
   }
 
-  public String getTaskLogTable()
-  {
-    return taskLogTable;
-  }
-
   public String getTaskLockTable()
   {
     return taskLockTable;
+  }
+
+  public String getSegmentSchemasTable()
+  {
+    return segmentSchemasTable;
+  }
+
+  /**
+   * If enabled, this causes table indices to be created with short, unique SHA-based identifiers.
+   */
+  public boolean isUseShortIndexNames()
+  {
+    return useShortIndexNames;
   }
 }

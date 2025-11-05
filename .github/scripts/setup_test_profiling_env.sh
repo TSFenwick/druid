@@ -21,24 +21,31 @@ JAR_INPUT_FILE="jfr-profiler-1.0.0.jar"
 JAR_OUTPUT_FILE="jfr-profiler.jar"
 ENV_VAR="JFR_PROFILER_ARG_LINE"
 
-if [ "$#" -ne 5 ]; then
-    echo "usage: $0 <jdk_version> <run_id> <run_number> <run_attempt> <module>"
+if [ "$#" -lt 1 ]; then
+    echo "usage: $0 <jdk_version> [<tag>=<value> ...]"
+    exit 1
 fi
 
-if [[ "$1" == "17" ]];
+if [[ "$1" -ge "17" ]];
 then
   curl https://static.imply.io/cp/$JAR_INPUT_FILE -s -o $JAR_OUTPUT_FILE
+
+  # Run 'java -version' and capture the output
+  output=$(java -version 2>&1)
+
+  # Extract the version number using grep and awk
+  jvm_version=$(echo "$output" | grep "version" | awk -F '"' '{print $2}')
+
+  shift
+  tags="${@/#/-Djfr.profiler.tags.}"
 
   echo $ENV_VAR=-javaagent:"$PWD"/$JAR_OUTPUT_FILE \
   -Djfr.profiler.http.username=druid-ci \
   -Djfr.profiler.http.password=w3Fb6PW8LIo849mViEkbgA== \
   -Djfr.profiler.tags.project=druid \
-  -Djfr.profiler.tags.run_id=$2 \
-  -Djfr.profiler.tags.run_number=$3 \
-  -Djfr.profiler.tags.run_attempt=$4 \
-  -Djfr.profiler.tags.module=$5
+  -Djfr.profiler.tags.jvm_version=$jvm_version \
+  "${tags[@]}"
 else
   echo $ENV_VAR=\"\"
 fi
-
 

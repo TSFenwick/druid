@@ -34,6 +34,7 @@ import org.apache.druid.guice.GuiceInjectors;
 import org.apache.druid.guice.JsonConfigProvider;
 import org.apache.druid.guice.LazySingleton;
 import org.apache.druid.guice.LifecycleModule;
+import org.apache.druid.guice.annotations.LoadScope;
 import org.apache.druid.guice.annotations.Self;
 import org.apache.druid.initialization.Initialization;
 import org.apache.druid.initialization.ServerInjectorBuilder;
@@ -41,12 +42,15 @@ import org.apache.druid.jackson.JacksonModule;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.java.util.emitter.service.ServiceEmitter;
 import org.apache.druid.java.util.emitter.service.ServiceEventBuilder;
+import org.apache.druid.java.util.metrics.AbstractMonitor;
 import org.apache.druid.java.util.metrics.BasicMonitorScheduler;
 import org.apache.druid.java.util.metrics.ClockDriftSafeMonitorScheduler;
+import org.apache.druid.java.util.metrics.Monitor;
 import org.apache.druid.java.util.metrics.MonitorScheduler;
 import org.apache.druid.java.util.metrics.NoopOshiSysMonitor;
 import org.apache.druid.java.util.metrics.NoopSysMonitor;
 import org.apache.druid.java.util.metrics.OshiSysMonitor;
+import org.apache.druid.java.util.metrics.OshiSysMonitorConfig;
 import org.apache.druid.java.util.metrics.SysMonitor;
 import org.apache.druid.server.DruidNode;
 import org.hamcrest.CoreMatchers;
@@ -61,6 +65,7 @@ import org.mockito.Mockito;
 import javax.validation.Validation;
 import javax.validation.Validator;
 import java.util.Properties;
+import java.util.Set;
 
 public class MetricsModuleTest
 {
@@ -158,6 +163,55 @@ public class MetricsModuleTest
   }
 
   @Test
+  public void test_monitorScheduler_addsMonitor_ifNodeRoleIsInLoadScope()
+  {
+    final Properties properties = new Properties();
+    properties.setProperty(
+        "druid.monitoring.monitors",
+        StringUtils.format("[\"%s\"]", OverlordOnlyMonitor.class.getName())
+    );
+
+    verifyThatMonitorIsLoadedOnlyOn(
+        OverlordOnlyMonitor.class,
+        properties,
+        NodeRole.OVERLORD
+    );
+  }
+
+  @Test
+  public void test_monitorScheduler_addsMonitor_ifNodeRoleIsInLoadScopeOfSuperClass()
+  {
+    final Properties properties = new Properties();
+    properties.setProperty(
+        "druid.monitoring.monitors",
+        StringUtils.format("[\"%s\"]", OverlordAndCoordinatorMonitor2.class.getName())
+    );
+
+    verifyThatMonitorIsLoadedOnlyOn(
+        OverlordAndCoordinatorMonitor2.class,
+        properties,
+        NodeRole.COORDINATOR,
+        NodeRole.OVERLORD
+    );
+  }
+
+  @Test
+  public void test_monitorScheduler_addsMonitor_ifNoLoadScopeIsDefined()
+  {
+    final Properties properties = new Properties();
+    properties.setProperty(
+        "druid.monitoring.monitors",
+        StringUtils.format("[\"%s\"]", AllNodeMonitor.class.getName())
+    );
+
+    verifyThatMonitorIsLoadedOnlyOn(
+        AllNodeMonitor.class,
+        properties,
+        NodeRole.values()
+    );
+  }
+
+  @Test
   public void testGetMonitorSchedulerUnknownSchedulerException()
   {
     final Properties properties = new Properties();
@@ -212,6 +266,24 @@ public class MetricsModuleTest
     Assert.assertTrue(sysMonitor instanceof NoopOshiSysMonitor);
     Mockito.verify(emitter, Mockito.never()).emit(ArgumentMatchers.any(ServiceEventBuilder.class));
   }
+
+  @Test
+  public void testGetOshiSysMonitorViaInjectorBroker()
+  {
+    Properties properties = new Properties();
+    properties.setProperty("druid.monitoring.sys.categories", "[\"mem\"]");
+    final Injector injector = createInjector(properties, ImmutableSet.of(NodeRole.BROKER));
+    final OshiSysMonitor sysMonitor = injector.getInstance(OshiSysMonitor.class);
+    final ServiceEmitter emitter = Mockito.mock(ServiceEmitter.class);
+    sysMonitor.doMonitor(emitter);
+
+    Assert.assertTrue(sysMonitor instanceof OshiSysMonitor);
+    Mockito.verify(emitter, Mockito.atLeastOnce()).emit(ArgumentMatchers.any(ServiceEventBuilder.class));
+
+    Assert.assertTrue(injector.getInstance(OshiSysMonitorConfig.class).shouldEmitMetricCategory("mem"));
+    Assert.assertFalse(injector.getInstance(OshiSysMonitorConfig.class).shouldEmitMetricCategory("swap"));
+  }
+
   @Test
   public void testGetOshiSysMonitorWhenNull()
   {
@@ -239,5 +311,48 @@ public class MetricsModuleTest
         ServerInjectorBuilder.registerNodeRoleModule(nodeRoles),
         new MetricsModule()
     );
+  }
+
+  private <T extends Monitor> void verifyThatMonitorIsLoadedOnlyOn(
+      Class<T> monitorClass,
+      Properties properties,
+      NodeRole... supportedRoles
+  )
+  {
+    final Set<NodeRole> supportedRoleSet = Set.of(supportedRoles);
+    for (NodeRole role : NodeRole.values()) {
+      final MonitorScheduler monitorScheduler = createInjector(properties, ImmutableSet.of(role))
+          .getInstance(MonitorScheduler.class);
+      Assert.assertEquals(
+          supportedRoleSet.contains(role),
+          monitorScheduler.findMonitor(monitorClass).isPresent()
+      );
+    }
+  }
+
+  public static class AllNodeMonitor extends AbstractMonitor
+  {
+    @Override
+    public boolean doMonitor(ServiceEmitter emitter)
+    {
+      return false;
+    }
+  }
+
+  @LoadScope(roles = {NodeRole.COORDINATOR_JSON_NAME, NodeRole.OVERLORD_JSON_NAME})
+  public static class OverlordAndCoordinatorMonitor extends AllNodeMonitor
+  {
+  }
+
+  @LoadScope(roles = NodeRole.OVERLORD_JSON_NAME)
+  public static class OverlordOnlyMonitor extends OverlordAndCoordinatorMonitor
+  {
+  }
+
+  /**
+   * Uses load scope of super class.
+   */
+  public static class OverlordAndCoordinatorMonitor2 extends OverlordAndCoordinatorMonitor
+  {
   }
 }

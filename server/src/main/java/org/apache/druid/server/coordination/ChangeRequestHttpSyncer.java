@@ -20,6 +20,7 @@
 package org.apache.druid.server.coordination;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.jaxrs.smile.SmileMediaTypes;
 import com.google.common.annotations.VisibleForTesting;
@@ -65,11 +66,11 @@ public class ChangeRequestHttpSyncer<T>
   private static final long MAX_RETRY_BACKOFF = TimeUnit.MINUTES.toMillis(2);
 
   private final ObjectMapper smileMapper;
+  private final JavaType changeRequestsSnapshotResponseType;
   private final HttpClient httpClient;
   private final ScheduledExecutorService executor;
   private final URL baseServerURL;
   private final String baseRequestPath;
-  private final TypeReference<ChangeRequestsSnapshot<T>> responseTypeReferences;
   private final long serverTimeoutMS;
   private final long serverHttpTimeout;
 
@@ -82,9 +83,13 @@ public class ChangeRequestHttpSyncer<T>
   private final CountDownLatch initializationLatch = new CountDownLatch(1);
 
   /**
-   * This lock is used to ensure proper start-then-stop semantics and making sure after stopping no state update happens
-   * and {@link #sync} is not again scheduled in {@link #executor} and if there was a previously scheduled sync before
-   * stopping, it is skipped and also, it is used to ensure that duplicate syncs are never scheduled in the executor.
+   * Lock to implement proper start-then-stop semantics. Used to ensure that:
+   * <ul>
+   * <li>No state update happens after {@link #stop()}.</li>
+   * <li>No sync is scheduled after {@link #stop()}.</li>
+   * <li>Any pending sync is skipped when {@link #stop()} has been called.</li>
+   * <li>Duplicate syncs are not scheduled on the executor.</li>
+   * </ul>
    */
   private final LifecycleLock startStopLock = new LifecycleLock();
 
@@ -112,11 +117,11 @@ public class ChangeRequestHttpSyncer<T>
   )
   {
     this.smileMapper = smileMapper;
+    this.changeRequestsSnapshotResponseType = smileMapper.getTypeFactory().constructType(responseTypeReferences);
     this.httpClient = httpClient;
     this.executor = executor;
     this.baseServerURL = baseServerURL;
     this.baseRequestPath = baseRequestPath;
-    this.responseTypeReferences = responseTypeReferences;
     this.serverTimeoutMS = serverTimeoutMS;
     this.serverHttpTimeout = serverTimeoutMS + HTTP_TIMEOUT_EXTRA_MS;
     this.listener = listener;
@@ -141,7 +146,7 @@ public class ChangeRequestHttpSyncer<T>
         startStopLock.exitStart();
       }
 
-      sinceSyncerStart.restart();
+      safeRestart(sinceSyncerStart);
       addNextSyncToWorkQueue();
     }
   }
@@ -220,21 +225,18 @@ public class ChangeRequestHttpSyncer<T>
    */
   public boolean isSyncedSuccessfully()
   {
-    if (consecutiveFailedAttemptCount > 0) {
-      return false;
-    } else {
-      return sinceLastSyncSuccess.hasNotElapsed(maxDurationToWaitForSync);
-    }
+    return consecutiveFailedAttemptCount <= 0
+           && sinceLastSyncSuccess.hasNotElapsed(maxDurationToWaitForSync);
   }
 
-  private void sync()
+  private void sendSyncRequest()
   {
     if (!startStopLock.awaitStarted(1, TimeUnit.MILLISECONDS)) {
       log.info("Skipping sync for server[%s] as syncer has not started yet.", logIdentity);
       return;
     }
 
-    sinceLastSyncRequest.restart();
+    safeRestart(sinceLastSyncRequest);
 
     try {
       final String req = getRequestString();
@@ -255,7 +257,7 @@ public class ChangeRequestHttpSyncer<T>
 
       Futures.addCallback(
           syncRequestFuture,
-          new FutureCallback<InputStream>()
+          new FutureCallback<>()
           {
             @Override
             public void onSuccess(InputStream stream)
@@ -270,7 +272,7 @@ public class ChangeRequestHttpSyncer<T>
                   final int responseCode = responseHandler.getStatus();
                   if (responseCode == HttpServletResponse.SC_NO_CONTENT) {
                     log.debug("Received NO CONTENT from server[%s]", logIdentity);
-                    sinceLastSyncSuccess.restart();
+                    safeRestart(sinceLastSyncSuccess);
                     return;
                   } else if (responseCode != HttpServletResponse.SC_OK) {
                     handleFailure(new ISE("Received sync response [%d]", responseCode));
@@ -278,7 +280,7 @@ public class ChangeRequestHttpSyncer<T>
                   }
 
                   log.debug("Received sync response from server[%s]", logIdentity);
-                  ChangeRequestsSnapshot<T> changes = smileMapper.readValue(stream, responseTypeReferences);
+                  ChangeRequestsSnapshot<T> changes = smileMapper.readValue(stream, changeRequestsSnapshotResponseType);
                   log.debug("Finished reading sync response from server[%s]", logIdentity);
 
                   if (changes.isResetCounter()) {
@@ -306,7 +308,7 @@ public class ChangeRequestHttpSyncer<T>
                     log.info("Server[%s] synced successfully.", logIdentity);
                   }
 
-                  sinceLastSyncSuccess.restart();
+                  safeRestart(sinceLastSyncSuccess);
                 }
                 catch (Exception ex) {
                   markServerUnstableAndAlert(ex, "Processing Response");
@@ -390,9 +392,9 @@ public class ChangeRequestHttpSyncer<T>
               RetryUtils.nextRetrySleepMillis(consecutiveFailedAttemptCount)
           );
           log.info("Scheduling next sync for server[%s] in [%d] millis.", logIdentity, delayMillis);
-          executor.schedule(this::sync, delayMillis, TimeUnit.MILLISECONDS);
+          executor.schedule(this::sendSyncRequest, delayMillis, TimeUnit.MILLISECONDS);
         } else {
-          executor.execute(this::sync);
+          executor.execute(this::sendSyncRequest);
         }
       }
       catch (Throwable th) {
@@ -410,10 +412,17 @@ public class ChangeRequestHttpSyncer<T>
     }
   }
 
+  private void safeRestart(Stopwatch stopwatch)
+  {
+    synchronized (startStopLock) {
+      stopwatch.restart();
+    }
+  }
+
   private void markServerUnstableAndAlert(Throwable throwable, String action)
   {
     if (consecutiveFailedAttemptCount++ == 0) {
-      sinceUnstable.restart();
+      safeRestart(sinceUnstable);
     }
 
     final long unstableSeconds = getUnstableTimeMillis() / 1000;
